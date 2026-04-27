@@ -167,7 +167,7 @@ function Sidebar({
   }, [isPlaying])
 
   return (
-    <aside className={`hidden h-full border-r border-zinc-300/90 bg-zinc-50 lg:flex lg:w-64 lg:flex-col ${isDarkMode ? 'theme-dark-chrome' : ''}`}>
+    <aside className={`relative z-40 hidden h-full border-r border-zinc-300/90 bg-zinc-50 lg:flex lg:w-64 lg:flex-col ${isDarkMode ? 'theme-dark-chrome' : ''}`}>
       <div className="border-b border-zinc-300 px-5 py-5">
         <div className="flex items-center justify-center">
           <img
@@ -192,7 +192,7 @@ function Sidebar({
                 type="button"
                 onClick={() => onScreenChange(item.id)}
                 className={[
-                  'tooltip-anchor tooltip-right flex w-full items-center justify-between gap-2 rounded-xl border px-3 py-2.5 text-left text-sm font-medium transition',
+                  'tooltip-anchor tooltip-bottom flex w-full items-center justify-between gap-2 rounded-xl border px-3 py-2.5 text-left text-sm font-medium transition',
                   item.id === 'gems'
                     ? activeScreen === item.id
                       ? 'gems-tab gems-tab-active border-amber-400 bg-amber-300 text-amber-950 shadow-[0_0_24px_rgba(251,191,36,0.85)]'
