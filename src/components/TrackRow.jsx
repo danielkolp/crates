@@ -61,7 +61,6 @@ function TrackRow({
           'tooltip-anchor grid w-full grid-cols-[40px_minmax(0,2.6fr)_minmax(0,1.1fr)_0.8fr_0.8fr_0.8fr_0.8fr_160px] gap-2 px-4 py-3 text-left transition',
           isSelected ? 'bg-zinc-100' : 'hover:bg-zinc-50',
         ].join(' ')}
-        data-tooltip="Select this track to inspect details"
       >
         <span className="mono pt-3 text-sm text-zinc-500">{rank}</span>
 
