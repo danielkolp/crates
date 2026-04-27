@@ -5,6 +5,19 @@
     <link rel="icon" type="image/svg+xml" href="favicon.svg" />
     <link rel="preload" href="images/logo.png" as="image" />
     <link rel="preload" href="images/logo-darkmode.png" as="image" />
+    <script>
+      ;(function (location) {
+        if (location.search[1] === '/') {
+          const decoded = location.search
+            .slice(1)
+            .split('&')
+            .map((segment) => segment.replace(/~and~/g, '&'))
+            .join('?')
+          const nextPath = `${location.pathname.slice(0, -1)}${decoded}${location.hash}`
+          window.history.replaceState(null, '', nextPath)
+        }
+      })(window.location)
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>react</title>
   </head>

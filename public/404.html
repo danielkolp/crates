@@ -1,0 +1,24 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Redirecting...</title>
+    <script>
+      ;(function () {
+        const segmentCount = 1
+        const locationRef = window.location
+        const redirect = `${locationRef.protocol}//${locationRef.hostname}${locationRef.port ? `:${locationRef.port}` : ''}${locationRef.pathname
+          .split('/')
+          .slice(0, 1 + segmentCount)
+          .join('/')}/?/${locationRef.pathname
+          .slice(1)
+          .split('/')
+          .slice(segmentCount)
+          .join('/')
+          .replace(/&/g, '~and~')}${locationRef.search ? `&${locationRef.search.slice(1).replace(/&/g, '~and~')}` : ''}${locationRef.hash}`
+        locationRef.replace(redirect)
+      })()
+    </script>
+  </head>
+  <body></body>
+</html>
