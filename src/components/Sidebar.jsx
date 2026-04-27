@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useRef } from 'react'
+import { publicAsset } from '../utils/assetUrl'
 
-const LIGHT_LOGO_SRC = '/images/logo.png'
-const DARK_LOGO_SRC = '/images/logo-darkmode.png'
+const LIGHT_LOGO_SRC = publicAsset('images/logo.png')
+const DARK_LOGO_SRC = publicAsset('images/logo-darkmode.png')
+const GEM_ICON_SRC = publicAsset('images/diamond.png')
 
 const NAV_ITEMS = [
   { id: 'digger', label: 'Digger' },
   { id: 'swipe', label: 'Swipe Mode' },
   { id: 'crates', label: 'Playlists' },
   { id: 'liked', label: 'Liked' },
-  { id: 'gems', label: 'Gems', icon: '/images/diamond.png' },
+  { id: 'gems', label: 'Gems', icon: GEM_ICON_SRC },
   { id: 'history', label: 'History' },
 ]
 

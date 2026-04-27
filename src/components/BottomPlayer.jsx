@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import YouTubePlayer from './YouTubePlayer'
+import { publicAsset } from '../utils/assetUrl'
+
+const SKIP_ICON_SRC = publicAsset('images/x.png')
+const SAVE_ICON_SRC = publicAsset('images/heart.png')
+const GEM_ICON_SRC = publicAsset('images/diamond.png')
 
 const YOUTUBE_IFRAME_SCRIPT_ID = 'youtube-iframe-api'
 let youtubeIframeApiPromise = null
@@ -503,7 +508,7 @@ function BottomPlayer({
                 aria-label="Skip track"
                 data-tooltip="Skip track (same as swipe left)"
               >
-                <img src="/images/x.png" alt="" className="h-5 w-5" draggable={false} />
+                <img src={SKIP_ICON_SRC} alt="" className="h-5 w-5" draggable={false} />
               </button>
             )}
             <button
@@ -534,7 +539,7 @@ function BottomPlayer({
                 aria-label="Save track"
                 data-tooltip="Save to liked tracks (same as swipe right)"
               >
-                <img src="/images/heart.png" alt="" className="h-5 w-5" draggable={false} />
+                <img src={SAVE_ICON_SRC} alt="" className="h-5 w-5" draggable={false} />
               </button>
             )}
             {!hideSwipeActions && (
@@ -551,7 +556,7 @@ function BottomPlayer({
                 aria-label="Gem track"
                 data-tooltip="Mark as gem (same as swipe down)"
               >
-                <img src="/images/diamond.png" alt="" className="h-5 w-5" draggable={false} />
+                <img src={GEM_ICON_SRC} alt="" className="h-5 w-5" draggable={false} />
               </button>
             )}
           </div>

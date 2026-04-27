@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { publicAsset } from '../utils/assetUrl'
 
 const HINT_IDLE_DELAY_MS = 5000
 const HINT_REPEAT_MS = 12000
 const HINT_ANIMATION_MS = 3600
 const GEM_REASON_TYPE_SPEED_MS = 15
 const DEFAULT_GEM_REASON = 'Underground balance across views and engagement'
+const SKIP_ICON_SRC = publicAsset('images/x.png')
+const SAVE_ICON_SRC = publicAsset('images/heart.png')
+const GEM_ICON_SRC = publicAsset('images/diamond.png')
 
 function formatRate(value) {
   return `${(value * 100).toFixed(1)}%`
@@ -603,7 +607,7 @@ function SwipeMode({
                 style={{ opacity: direction === 'left' ? Math.min(progressOpacity, 1) : 0 }}
               >
                 <img
-                  src="/images/x.png"
+                  src={SKIP_ICON_SRC}
                   alt="Skip"
                   className="h-16 w-16 select-none md:h-20 md:w-20"
                   style={{ transform: `scale(${1 + (Math.min(progressOpacity, 1) * 0.45)})` }}
@@ -616,7 +620,7 @@ function SwipeMode({
                 style={{ opacity: direction === 'right' ? Math.min(progressOpacity, 1) : 0 }}
               >
                 <img
-                  src="/images/heart.png"
+                  src={SAVE_ICON_SRC}
                   alt="Save"
                   className="h-16 w-16 select-none md:h-20 md:w-20"
                   style={{ transform: `scale(${1 + (Math.min(progressOpacity, 1) * 0.45)})` }}
@@ -629,7 +633,7 @@ function SwipeMode({
                 style={{ opacity: direction === 'down' ? Math.min(gemOpacity, 1) : 0 }}
               >
                 <img
-                  src="/images/diamond.png"
+                  src={GEM_ICON_SRC}
                   alt="Gem"
                   className="h-16 w-16 select-none md:h-20 md:w-20"
                   style={{ transform: `scale(${1 + (Math.min(gemOpacity, 1) * 0.45)})` }}
@@ -708,7 +712,7 @@ function SwipeMode({
                 aria-label="Skip track"
                 data-tooltip="Skip track"
               >
-                <img src="/images/x.png" alt="" className="h-6 w-6" draggable={false} />
+                <img src={SKIP_ICON_SRC} alt="" className="h-6 w-6" draggable={false} />
               </button>
               <button
                 type="button"
@@ -718,7 +722,7 @@ function SwipeMode({
                 aria-label="Save track"
                 data-tooltip="Save track"
               >
-                <img src="/images/heart.png" alt="" className="h-6 w-6" draggable={false} />
+                <img src={SAVE_ICON_SRC} alt="" className="h-6 w-6" draggable={false} />
               </button>
               <button
                 type="button"
@@ -728,7 +732,7 @@ function SwipeMode({
                 aria-label="Gem track"
                 data-tooltip="Gem track"
               >
-                <img src="/images/diamond.png" alt="" className="h-6 w-6" draggable={false} />
+                <img src={GEM_ICON_SRC} alt="" className="h-6 w-6" draggable={false} />
               </button>
             </div>
           </div>

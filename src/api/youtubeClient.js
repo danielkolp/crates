@@ -6,6 +6,8 @@ import { filterTracks } from '../utils/filterTracks'
 const mockFallbackTracks = attachGemScores(mockTracks)
 const searchCache = new Map()
 const DEV = import.meta.env.DEV
+const PROD = import.meta.env.PROD
+const ALLOW_PUBLIC_YOUTUBE_API = import.meta.env.VITE_ALLOW_PUBLIC_YOUTUBE_API === 'true'
 
 const SEARCH_DEFAULTS = [
   'underground uk garage full track',
@@ -88,6 +90,10 @@ function shuffleTracks(tracks = []) {
 }
 
 function getApiKey() {
+  if (PROD && !ALLOW_PUBLIC_YOUTUBE_API) {
+    return ''
+  }
+
   return import.meta.env.VITE_YOUTUBE_API_KEY || ''
 }
 
@@ -413,7 +419,10 @@ export async function searchTracks(query = '', filters = {}) {
   const cachedPromise = (async () => {
     const apiKey = getApiKey()
     if (!apiKey) {
-      setSearchStatus('mock', true, 'Mock fallback active. Add VITE_YOUTUBE_API_KEY to enable live YouTube search.')
+      const message = PROD
+        ? 'Mock fallback active. Live YouTube API is disabled for this production build.'
+        : 'Mock fallback active. Add VITE_YOUTUBE_API_KEY to enable live YouTube search.'
+      setSearchStatus('mock', true, message)
       await wait(180)
       return shuffleTracks(filterTracks(mockFallbackTracks, { ...filters, query }))
     }
