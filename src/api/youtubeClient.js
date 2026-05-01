@@ -1,9 +1,18 @@
-import mockTracks from '../data/mockTracks'
-import mockCrates from '../data/mockCrates'
-import { attachGemScores, getTrackQualityScore } from '../utils/gemScore'
-import { filterTracks } from '../utils/filterTracks'
+// youtubeClient.js - handles searching YouTube for music tracks, normalizing results,
+// and applying quality filters. Uses YouTube Data API v3 only.
 
-const mockFallbackTracks = attachGemScores(mockTracks)
+import { attachGemScores, getTrackQualityScore } from '../utils/gemScore'
+import {
+  filterTracks,
+  getAvailableFormatOptions,
+  getAvailableStyleOptions,
+  getMusicLikelihoodDetails,
+  getTrackFormatLabels,
+  getTrackStyleLabels,
+  isLikelyMusicTrack,
+  isLikelyShort,
+} from '../utils/filterTracks'
+
 const searchCache = new Map()
 const DEV = import.meta.env.DEV
 
@@ -30,44 +39,33 @@ const MUSIC_INTENT_APPEND = [
   'breaks',
 ]
 
-const OPTIONAL_INTENT = ['official audio', 'topic', 'provided to youtube', 'single', 'ep', 'original mix', 'extended mix']
+const OPTIONAL_INTENT = [
+  'official audio',
+  'topic',
+  'provided to youtube',
+  'single',
+  'ep',
+  'original mix',
+  'extended mix',
+]
 
-const BAD_KEYWORDS = [
-  '#shorts',
-  'shorts',
-  'reaction',
-  'newsong',
-  'singer',
-  'all my songs in bio',
-  'link in bio',
-  'kids',
-  'cover',
-  'karaoke',
-  'tutorial',
-  'lyrics',
-  'playlist',
-  'compilation',
-  'tiktok',
-  'viral',
-  'challenge',
-  'subscribe',
-  'minecraft',
-  'roblox',
-  'fortnite',
-  'vlog',
-  'prank',
-  'news',
-  'live reaction',
-  'sped up',
-  'slowed reverb',
+const HARD_NON_MUSIC_PATTERNS = [
+  { label: 'tutorial', pattern: /\btutorial\b|\bhow to\b|\blesson\b|\bwalkthrough\b/i },
+  { label: 'production-tutorial', pattern: /\bableton\b|\bfl studio\b|\bmixing tutorial\b|\bmastering tutorial\b/i },
+  { label: 'reaction', pattern: /\breaction\b|\breacts?\b|\bfirst time hearing\b/i },
+  { label: 'review', pattern: /\breview\b|\bunboxing\b|\bgear review\b/i },
+  { label: 'interview-podcast', pattern: /\binterview\b|\bpodcast\b/i },
+  { label: 'explainer', pattern: /\bexplained\b|\bvideo essay\b|\bbehind the scenes\b/i },
+  { label: 'vlog-prank', pattern: /\bvlog\b|\bprank\b/i },
+  { label: 'game-content', pattern: /\bminecraft\b|\broblox\b|\bfortnite\b/i },
 ]
 
 const EXCLUDE_TERMS = ['-shorts', '-reaction', '-kids', '-news', '-cover', '-tutorial']
 
 let lastSearchStatus = {
-  source: 'mock',
-  usedFallback: true,
-  message: 'Mock tracks loaded.',
+  source: 'youtube',
+  usedFallback: false,
+  message: 'Ready for live YouTube search.',
 }
 
 function wait(ms) {
@@ -91,6 +89,44 @@ function getApiKey() {
   return import.meta.env.VITE_YOUTUBE_API_KEY || ''
 }
 
+function cleanYouTubeVideoId(value) {
+  const match = String(value || '').match(/[a-zA-Z0-9_-]{11}/)
+  return match?.[0] || ''
+}
+
+function extractYouTubeVideoId(value) {
+  const raw = String(value || '').trim().replace(/^yt-/, '')
+
+  if (!raw) return ''
+  if (/^[a-zA-Z0-9_-]{11}$/.test(raw)) return raw
+
+  try {
+    const url = new URL(raw)
+    const videoParam = cleanYouTubeVideoId(url.searchParams.get('v'))
+
+    if (videoParam) return videoParam
+
+    const pathParts = url.pathname.split('/').filter(Boolean)
+
+    if (url.hostname.includes('youtu.be')) {
+      return cleanYouTubeVideoId(pathParts[0])
+    }
+
+    const idParentIndex = pathParts.findIndex((part) =>
+      ['embed', 'live', 'shorts', 'v'].includes(part.toLowerCase()),
+    )
+
+    if (idParentIndex >= 0) {
+      return cleanYouTubeVideoId(pathParts[idParentIndex + 1])
+    }
+
+    return cleanYouTubeVideoId(pathParts[pathParts.length - 1])
+  } catch {
+    const urlLikeMatch = raw.match(/(?:v=|youtu\.be\/|shorts\/|embed\/|live\/)([a-zA-Z0-9_-]{11})/)
+    return urlLikeMatch?.[1] || ''
+  }
+}
+
 function setSearchStatus(source, usedFallback, message) {
   lastSearchStatus = {
     source,
@@ -103,11 +139,17 @@ export function getLastSearchStatus() {
   return lastSearchStatus
 }
 
+function normalizeCacheList(values = []) {
+  return [...values].map((value) => String(value).toLowerCase()).sort()
+}
+
 function buildSearchKey(query, filters = {}) {
   return JSON.stringify({
     query: query.trim().toLowerCase(),
     refreshKey: filters.refreshKey ?? 0,
     genre: filters.genre ?? 'all',
+    style: filters.style ?? 'all',
+    format: filters.format ?? 'all',
     vibe: filters.vibe ?? 'all',
     maxViews: filters.maxViews ?? 'any',
     minGemScore: filters.minGemScore ?? 'any',
@@ -118,13 +160,14 @@ function buildSearchKey(query, filters = {}) {
     hideShorts: Boolean(filters.hideShorts),
     preferTopicChannels: Boolean(filters.preferTopicChannels),
     sortBy: filters.sortBy ?? 'gemScore',
-    activeTags: [...(filters.activeTags || [])].map((tag) => String(tag).toLowerCase()).sort(),
-    digDeeperTags: [...(filters.digDeeperTags || [])].map((tag) => String(tag).toLowerCase()).sort(),
+    activeTags: normalizeCacheList(filters.activeTags || []),
+    digDeeperTags: normalizeCacheList(filters.digDeeperTags || []),
   })
 }
 
 function parseYouTubeDuration(duration = '') {
   const match = duration.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/i)
+
   if (!match) {
     return { seconds: 0, label: '0:00' }
   }
@@ -132,7 +175,7 @@ function parseYouTubeDuration(duration = '') {
   const hours = Number(match[1] || 0)
   const minutes = Number(match[2] || 0)
   const seconds = Number(match[3] || 0)
-  const totalSeconds = (hours * 3600) + (minutes * 60) + seconds
+  const totalSeconds = hours * 3600 + minutes * 60 + seconds
   const labelMinutes = Math.floor(totalSeconds / 60)
   const labelSeconds = totalSeconds % 60
 
@@ -164,28 +207,41 @@ function emojiHeavyTitle(title = '') {
   const value = String(title)
   const emojiLike = (value.match(/[\u{1F300}-\u{1FAFF}\u2600-\u27BF]/gu) || []).length
   const alnum = (value.match(/[a-z0-9]/gi) || []).length
+
   return emojiLike > 4 && emojiLike > alnum
 }
 
 function promoWordCount(text = '') {
   const promoWords = ['bio', 'viral', 'subscribe', 'follow', 'new song', 'newsong']
   const normalized = String(text).toLowerCase()
+
   return promoWords.reduce((count, word) => count + (normalized.includes(word) ? 1 : 0), 0)
 }
 
 function buildYouTubeQuery(query, filters = {}) {
   const parts = []
   const normalizedQuery = String(query || '').trim()
+  const selectedStyle =
+    filters.style && filters.style !== 'all'
+      ? filters.style
+      : filters.genre
+  const hasSelectedStyle = selectedStyle && selectedStyle !== 'all'
 
   if (normalizedQuery) {
     parts.push(normalizedQuery)
+  } else if (hasSelectedStyle) {
+    parts.push(`underground ${selectedStyle} full track`)
   } else {
     const seed = SEARCH_DEFAULTS[Math.floor(Math.random() * SEARCH_DEFAULTS.length)]
     parts.push(seed)
   }
 
-  if (filters.genre && filters.genre !== 'all') {
-    parts.push(filters.genre)
+  if (hasSelectedStyle && normalizedQuery) {
+    parts.push(selectedStyle)
+  }
+
+  if (filters.format && filters.format !== 'all') {
+    parts.push(filters.format)
   }
 
   if (filters.vibe && filters.vibe !== 'all') {
@@ -213,31 +269,30 @@ function buildYouTubeQuery(query, filters = {}) {
   return parts.join(' ').replace(/\s+/g, ' ').trim()
 }
 
-function hasBadKeyword(title = '', description = '', channel = '') {
-  const haystack = `${title} ${description} ${channel}`.toLowerCase()
-  return BAD_KEYWORDS.find((keyword) => haystack.includes(keyword)) || null
+function findHardNonMusicPattern(title = '', description = '', channel = '') {
+  const haystack = `${title} ${description} ${channel}`
+
+  return HARD_NON_MUSIC_PATTERNS.find(({ pattern }) => pattern.test(haystack)) || null
 }
 
-function debugReject(video, reason) {
-  if (!DEV) {
-    return
-  }
-
-  console.log('[CrateDigger][reject]', {
-    title: video.snippet?.title,
-    channel: video.snippet?.channelTitle,
-    reason,
-  })
+function incrementReason(map, reason) {
+  map.set(reason, (map.get(reason) || 0) + 1)
 }
 
 function stripTopicSuffix(name = '') {
   const normalized = String(name || '').trim()
+
   if (!normalized) {
     return ''
   }
 
-  const withoutTopicSuffix = normalized.replace(/\s*[-–—]\s*topic\s*$/i, '').trim()
+  const withoutTopicSuffix = normalized.replace(/\s*[-\u2013\u2014]\s*topic\s*$/i, '').trim()
+
   return withoutTopicSuffix || normalized
+}
+
+function normalizeTag(value) {
+  return String(value ?? '').trim().toLowerCase()
 }
 
 function normalizeYouTubeVideo(video, filters = {}) {
@@ -250,13 +305,24 @@ function normalizeYouTubeVideo(video, filters = {}) {
   const statistics = video.statistics || {}
   const contentDetails = video.contentDetails || {}
   const parsedDuration = parseYouTubeDuration(contentDetails.duration || 'PT0S')
-  const genre = filters.genre && filters.genre !== 'all' ? filters.genre : 'YouTube'
-  const vibe = filters.vibe && filters.vibe !== 'all' ? filters.vibe : 'Discovery'
-  const tags = Array.isArray(snippet.tags) && snippet.tags.length > 0 ? snippet.tags : [...(filters.activeTags || [])]
   const sourceChannelTitle = snippet.channelTitle || 'Unknown Channel'
   const displayArtist = stripTopicSuffix(sourceChannelTitle) || sourceChannelTitle
 
-  return {
+  const genre =
+    filters.style && filters.style !== 'all'
+      ? filters.style
+      : filters.genre && filters.genre !== 'all'
+        ? filters.genre
+        : ''
+
+  const vibe = filters.vibe && filters.vibe !== 'all' ? filters.vibe : ''
+
+  const tags = [
+    ...(Array.isArray(snippet.tags) ? snippet.tags : []),
+    ...(filters.activeTags || []),
+  ]
+
+  const normalizedTrack = {
     id: youtubeVideoId ? `yt-${youtubeVideoId}` : `yt-${snippet.channelId || snippet.title || 'unknown'}`,
     youtubeVideoId,
     title: snippet.title || 'Untitled Upload',
@@ -279,59 +345,121 @@ function normalizeYouTubeVideo(video, filters = {}) {
     waveform: buildWaveformSeed(youtubeVideoId),
     embedUrl: youtubeVideoId ? `https://www.youtube.com/embed/${youtubeVideoId}` : '',
   }
+
+  const styles = getTrackStyleLabels(normalizedTrack)
+  const formats = getTrackFormatLabels(normalizedTrack)
+
+  const enhancedTags = [
+    ...normalizedTrack.tags,
+    ...styles.map((style) => style.toLowerCase()),
+    ...formats.map((format) => format.toLowerCase()),
+  ]
+
+  return {
+    ...normalizedTrack,
+    genre: styles[0] || '',
+    style: styles[0] || '',
+    styles,
+    format: formats[0] || 'Track',
+    formats,
+    platform: 'YouTube',
+    tags: [...new Set(enhancedTags.map(normalizeTag).filter(Boolean))],
+  }
 }
 
 function evaluateVideoQuality(track, filters = {}) {
   const title = String(track.title || '')
   const description = String(track.description || '')
   const channel = String(track.sourceChannelTitle || track.channelTitle || '')
-  const normalizedTitle = title.toLowerCase()
+  const musicLikelihood = getMusicLikelihoodDetails(track)
   const hashtagCountTitle = countHashtags(title)
   const hashtagCountDescription = countHashtags(description)
   const qualityScore = getTrackQualityScore(track)
 
-  if (filters.hideShorts !== false && Number(track.durationSeconds || 0) < 90) {
-    return { keep: false, reason: 'rejected: shorts duration', qualityScore }
+  if (filters.hideShorts !== false && isLikelyShort(track)) {
+    return {
+      keep: false,
+      reason: 'rejected: shorts guard',
+      qualityScore,
+      musicLikelihood,
+    }
   }
 
-  if (Number(track.durationSeconds || 0) > 720 && !/mix|extended/.test(normalizedTitle)) {
-    return { keep: false, reason: 'rejected: duration too long', qualityScore }
+  const hardNonMusicPattern = findHardNonMusicPattern(title, description, channel)
+
+  if (hardNonMusicPattern && musicLikelihood.score < 7.1) {
+    return {
+      keep: false,
+      reason: `rejected: non-music intent (${hardNonMusicPattern.label})`,
+      qualityScore,
+      musicLikelihood,
+    }
   }
 
-  const badKeyword = hasBadKeyword(title, description, channel)
-  if (badKeyword) {
-    return { keep: false, reason: `rejected: bad keyword (${badKeyword})`, qualityScore }
+  if (filters.musicTracksOnly !== false && !isLikelyMusicTrack(track)) {
+    return {
+      keep: false,
+      reason: 'rejected: low music likelihood',
+      qualityScore,
+      musicLikelihood,
+    }
   }
 
-  if (hashtagCountTitle > 3) {
-    return { keep: false, reason: 'rejected: title hashtag spam', qualityScore }
+  if (hashtagCountTitle > 3 && musicLikelihood.score < 7.5) {
+    return {
+      keep: false,
+      reason: 'rejected: title hashtag spam',
+      qualityScore,
+      musicLikelihood,
+    }
   }
 
-  if (hashtagCountDescription > 14) {
-    return { keep: false, reason: 'rejected: description hashtag spam', qualityScore }
+  if (hashtagCountDescription > 14 && musicLikelihood.score < 7.5) {
+    return {
+      keep: false,
+      reason: 'rejected: description hashtag spam',
+      qualityScore,
+      musicLikelihood,
+    }
   }
 
-  if (emojiHeavyTitle(title)) {
-    return { keep: false, reason: 'rejected: emoji-heavy title', qualityScore }
+  if (emojiHeavyTitle(title) && musicLikelihood.score < 7.5) {
+    return {
+      keep: false,
+      reason: 'rejected: emoji-heavy title',
+      qualityScore,
+      musicLikelihood,
+    }
   }
 
-  if (promoWordCount(title) >= 2) {
-    return { keep: false, reason: 'rejected: promo-heavy title', qualityScore }
+  if (promoWordCount(title) >= 2 && musicLikelihood.score < 7.5) {
+    return {
+      keep: false,
+      reason: 'rejected: promo-heavy title',
+      qualityScore,
+      musicLikelihood,
+    }
   }
 
-  if (filters.preferTopicChannels !== false && !channel.endsWith(' - Topic') && qualityScore < 4) {
-    return { keep: false, reason: 'rejected: weak topic/track structure', qualityScore }
+  if (qualityScore < 2.4 && musicLikelihood.score < 5.4) {
+    return {
+      keep: false,
+      reason: 'rejected: low track quality score',
+      qualityScore,
+      musicLikelihood,
+    }
   }
 
-  if (qualityScore < 3) {
-    return { keep: false, reason: 'rejected: low track quality score', qualityScore }
+  return {
+    keep: true,
+    qualityScore,
+    musicLikelihood,
   }
-
-  return { keep: true, qualityScore }
 }
 
 async function fetchYouTubeJson(url) {
   const response = await fetch(url)
+
   if (!response.ok) {
     throw new Error(`YouTube request failed: ${response.status}`)
   }
@@ -339,14 +467,92 @@ async function fetchYouTubeJson(url) {
   return response.json()
 }
 
+function getVideoId(track) {
+  return String(track?.youtubeVideoId || track?.videoId || track?.id || '').replace(/^yt-/, '')
+}
+
+function summarizeTopTrack(track) {
+  const breakdown = track.scoreBreakdown || {}
+
+  return {
+    title: track.title,
+    channel: track.sourceChannelTitle || track.channelTitle || track.artist,
+    style: track.style,
+    styles: track.styles,
+    format: track.format,
+    views: track.views,
+    qualityScore: track.qualityScore,
+    gemScore: track.gemScore,
+    musicLikelihood: breakdown.musicLikelihood,
+    baseGemScore: breakdown.baseGemScore,
+    engagementBoost: breakdown.engagementBoost,
+    lowViewBoost: breakdown.lowViewBoost,
+    nicheGenreBoost: breakdown.nicheGenreBoost,
+    topicBoost: breakdown.topicBoost,
+    qualityBoost: breakdown.qualityBoost,
+    penalties: breakdown.penalties,
+    finalGemScore: breakdown.finalGemScore,
+  }
+}
+
+function debugYouTubeResults({ searchQuery, candidates, accepted, rejectedCounts, scored }) {
+  if (!DEV) {
+    return
+  }
+
+  console.groupCollapsed(`[CrateDigger][youtube] accepted ${accepted.length}/${candidates.length}`)
+  console.log('query:', searchQuery)
+
+  console.table(
+    Array.from(rejectedCounts.entries()).map(([reason, count]) => ({
+      reason,
+      count,
+    })),
+  )
+
+  console.table(
+    [...scored]
+      .sort((a, b) => b.gemScore - a.gemScore)
+      .slice(0, 10)
+      .map(summarizeTopTrack),
+  )
+
+  console.table(getAvailableStyleOptions(scored).slice(0, 15))
+  console.table(getAvailableFormatOptions(scored).slice(0, 15))
+
+  const goldCandidate =
+    scored.find((track) => getVideoId(track) === 'AE_fJPFMC1M') ||
+    candidates.find((track) => getVideoId(track) === 'AE_fJPFMC1M')
+
+  if (goldCandidate) {
+    console.log('[CrateDigger][gold-hidden-gem]', {
+      accepted: scored.some((track) => getVideoId(track) === 'AE_fJPFMC1M'),
+      musicLikelihood: getMusicLikelihoodDetails(goldCandidate),
+      scoreBreakdown: goldCandidate.scoreBreakdown,
+      track: goldCandidate,
+    })
+  }
+
+  if (candidates.length > 0 && accepted.length / candidates.length <= 0.25) {
+    console.warn('[CrateDigger][youtube] preflight removed most candidates', {
+      candidates: candidates.length,
+      accepted: accepted.length,
+    })
+  }
+
+  console.groupEnd()
+}
+
 async function fetchYouTubeTracks(query, filters = {}) {
   const apiKey = getApiKey()
+
   if (!apiKey) {
-    return null
+    return []
   }
 
   const searchQuery = buildYouTubeQuery(query, filters)
   const searchUrl = new URL('https://www.googleapis.com/youtube/v3/search')
+
   searchUrl.searchParams.set('part', 'snippet')
   searchUrl.searchParams.set('type', 'video')
   searchUrl.searchParams.set('maxResults', '36')
@@ -365,6 +571,7 @@ async function fetchYouTubeTracks(query, filters = {}) {
   }
 
   const videosUrl = new URL('https://www.googleapis.com/youtube/v3/videos')
+
   videosUrl.searchParams.set('part', 'snippet,statistics,contentDetails')
   videosUrl.searchParams.set('id', videoIds.join(','))
   videosUrl.searchParams.set('key', apiKey)
@@ -377,12 +584,13 @@ async function fetchYouTubeTracks(query, filters = {}) {
     .filter(Boolean)
 
   const accepted = []
+  const rejectedCounts = new Map()
 
   for (const candidate of candidates) {
     const qualityCheck = evaluateVideoQuality(candidate, filters)
 
     if (!qualityCheck.keep) {
-      debugReject({ snippet: { title: candidate.title, channelTitle: candidate.channelTitle } }, qualityCheck.reason)
+      incrementReason(rejectedCounts, qualityCheck.reason)
       continue
     }
 
@@ -391,43 +599,63 @@ async function fetchYouTubeTracks(query, filters = {}) {
 
   const scored = attachGemScores(accepted)
 
-  if (DEV) {
-    scored.forEach((track) => {
-      console.log('[CrateDigger][score]', {
-        title: track.title,
-        qualityScore: track.qualityScore,
-        gemScore: track.gemScore,
-      })
-    })
-  }
+  debugYouTubeResults({
+    searchQuery,
+    candidates,
+    accepted,
+    rejectedCounts,
+    scored,
+  })
 
   return scored
 }
 
 export async function searchTracks(query = '', filters = {}) {
   const cacheKey = buildSearchKey(query, filters)
+
   if (searchCache.has(cacheKey)) {
     return searchCache.get(cacheKey)
   }
 
   const cachedPromise = (async () => {
     const apiKey = getApiKey()
+
     if (!apiKey) {
-      setSearchStatus('mock', true, 'Mock fallback active. Add VITE_YOUTUBE_API_KEY to enable live YouTube search.')
+      setSearchStatus(
+        'youtube',
+        false,
+        'No YouTube API key found. Add VITE_YOUTUBE_API_KEY to enable live search.',
+      )
+
       await wait(180)
-      return shuffleTracks(filterTracks(mockFallbackTracks, { ...filters, query }))
+      return []
     }
 
     try {
       const apiTracks = await fetchYouTubeTracks(query, filters)
+
       if (Array.isArray(apiTracks)) {
-        setSearchStatus('youtube', false, apiTracks.length === 0 ? 'No clean music tracks found for this search.' : 'Live YouTube results loaded.')
+        setSearchStatus(
+          'youtube',
+          false,
+          apiTracks.length === 0
+            ? 'No clean music tracks found for this search.'
+            : 'Live YouTube results loaded.',
+        )
+
         return shuffleTracks(filterTracks(apiTracks, { ...filters, query: '' }))
       }
-    } catch {
-      setSearchStatus('mock', true, 'YouTube request failed. Showing mock fallback for this session.')
+    } catch (error) {
+      console.error('[CrateDigger][youtube] request failed', error)
+
+      setSearchStatus(
+        'youtube',
+        false,
+        'YouTube request failed. Try again or check your API key/quota.',
+      )
+
       await wait(180)
-      return shuffleTracks(filterTracks(mockFallbackTracks, { ...filters, query }))
+      return []
     }
 
     setSearchStatus('youtube', false, 'Live YouTube results loaded.')
@@ -451,18 +679,35 @@ export async function searchYouTubeVideos(query = '', filters = {}) {
 }
 
 export async function getTrackById(id) {
-  return mockFallbackTracks.find((track) => track.id === id) || null
+  const videoId = extractYouTubeVideoId(id)
+
+  if (!videoId) {
+    return null
+  }
+
+  return getVideoDetails(videoId)
 }
 
 export async function getRelatedTracks(trackId) {
-  const baseTrack = mockFallbackTracks.find((track) => track.id === trackId)
+  const baseTrack = await getTrackById(trackId)
+
   if (!baseTrack) {
     return []
   }
 
-  const relatedQuery = `${baseTrack.artist} ${baseTrack.genre} official audio`
+  const relatedQuery = [
+    baseTrack.artist,
+    baseTrack.title,
+    baseTrack.styles?.[0] || baseTrack.style || baseTrack.genre,
+    baseTrack.format === 'DJ Set' ? 'dj set' : 'official audio',
+  ]
+    .filter(Boolean)
+    .join(' ')
+
   const related = await searchTracks(relatedQuery, {
-    genre: baseTrack.genre || 'all',
+    genre: 'all',
+    style: 'all',
+    format: 'all',
     vibe: 'all',
     maxViews: 'any',
     minGemScore: 'any',
@@ -476,14 +721,7 @@ export async function getRelatedTracks(trackId) {
     activeTags: baseTrack.tags?.slice(0, 3) || [],
   })
 
-  return related.filter((track) => track.id !== trackId).slice(0, 12)
-}
-
-export async function getUserPlaylists() {
-  return mockCrates.map((crate) => ({
-    ...crate,
-    trackIds: [],
-  }))
+  return related.filter((track) => track.id !== baseTrack.id).slice(0, 12)
 }
 
 export async function addTrackToCrate(trackId, crateId) {
@@ -494,28 +732,80 @@ export async function addTrackToCrate(trackId, crateId) {
   }
 }
 
-export async function getVideoDetails(videoId) {
+export async function getVideoDetails(videoId, filters = {}) {
   const apiKey = getApiKey()
-  if (!apiKey || !videoId) {
-    return mockFallbackTracks.find((track) => track.youtubeVideoId === videoId) || null
+  const normalizedVideoId = extractYouTubeVideoId(videoId)
+
+  if (!apiKey || !normalizedVideoId) {
+    return null
   }
 
   try {
     const videosUrl = new URL('https://www.googleapis.com/youtube/v3/videos')
+
     videosUrl.searchParams.set('part', 'snippet,statistics,contentDetails')
-    videosUrl.searchParams.set('id', videoId)
+    videosUrl.searchParams.set('id', normalizedVideoId)
     videosUrl.searchParams.set('key', apiKey)
 
     const videosResult = await fetchYouTubeJson(videosUrl.toString())
     const video = videosResult.items?.[0]
-    return normalizeYouTubeVideo(video) || null
-  } catch {
-    return mockFallbackTracks.find((track) => track.youtubeVideoId === videoId) || null
+
+    return normalizeYouTubeVideo(video, filters) || null
+  } catch (error) {
+    console.error('[CrateDigger][youtube] video details failed', error)
+    return null
   }
+}
+
+export async function getYouTubeGemScoreDetails(link, filters = {}) {
+  const videoId = extractYouTubeVideoId(link)
+
+  if (!videoId) {
+    throw new Error('Could not find a YouTube video ID in that link.')
+  }
+
+  if (!getApiKey()) {
+    throw new Error('No YouTube API key found. Add VITE_YOUTUBE_API_KEY to score a link.')
+  }
+
+  const track = await getVideoDetails(videoId, filters)
+
+  if (!track) {
+    throw new Error(`No YouTube video details found for ${videoId}.`)
+  }
+
+  const scoredTrack = attachGemScores([track])[0]
+  const musicLikelihood = getMusicLikelihoodDetails(scoredTrack)
+
+  return {
+    videoId,
+    url: `https://www.youtube.com/watch?v=${videoId}`,
+    title: scoredTrack.title,
+    channel: scoredTrack.sourceChannelTitle || scoredTrack.channelTitle || scoredTrack.artist,
+    gemScore: scoredTrack.gemScore,
+    qualityScore: scoredTrack.qualityScore,
+    musicLikelihood: musicLikelihood.score,
+    isLikelyMusic: musicLikelihood.isLikelyMusic,
+    styles: scoredTrack.styles || [],
+    formats: scoredTrack.formats || [],
+    reason: scoredTrack.gemReason,
+    track: scoredTrack,
+  }
+}
+
+export async function getYouTubeGemScore(link, filters = {}) {
+  const details = await getYouTubeGemScoreDetails(link, filters)
+  return details.gemScore
+}
+
+export async function logYouTubeGemScore(link, filters = {}) {
+  const details = await getYouTubeGemScoreDetails(link, filters)
+  console.log('[CrateDigger][gem-score]', details)
+  return details.gemScore
 }
 
 export function normalizeYouTubeVideoForTests(video, filters = {}) {
   return normalizeYouTubeVideo(video, filters)
 }
 
-export { parseYouTubeDuration, normalizeYouTubeVideo }
+export { extractYouTubeVideoId, parseYouTubeDuration, normalizeYouTubeVideo }

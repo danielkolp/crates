@@ -1,3 +1,10 @@
+import {
+  getMusicLikelihoodDetails,
+  isTopicChannel,
+  parseCount,
+  parseDurationSeconds,
+} from './filterTracks.js'
+
 // Professional deterministic music discovery scorer
 // Goal: rank underground / high-quality music tracks while filtering Shorts, spam, reactions, kids content,
 // low-confidence noise, and fake engagement.
@@ -11,20 +18,22 @@
 
 const DEFAULT_PROFILE = Object.freeze({
   weights: {
-    engagement: 0.28,
-    authenticity: 0.22,
-    undergroundFit: 0.18,
-    velocity: 0.12,
-    stayingPower: 0.1,
-    confidence: 0.1,
+    engagement: 0.16,
+    authenticity: 0.28,
+    undergroundFit: 0.23,
+    velocity: 0.06,
+    stayingPower: 0.12,
+    confidence: 0.08,
+    musicLikelihood: 0.07,
   },
 
   qualityWeights: {
     authenticity: 0.34,
-    engagement: 0.24,
-    confidence: 0.16,
-    stayingPower: 0.14,
-    undergroundFit: 0.12,
+    musicLikelihood: 0.24,
+    engagement: 0.08,
+    confidence: 0.14,
+    stayingPower: 0.1,
+    undergroundFit: 0.1,
   },
 
   priors: {
@@ -35,15 +44,15 @@ const DEFAULT_PROFILE = Object.freeze({
   },
 
   discovery: {
-    idealUndergroundViewsLow: 1200,
-    idealUndergroundViewsHigh: 75000,
-    tooFewViews: 80,
-    tooManyViews: 1500000,
+    idealUndergroundViewsLow: 800,
+    idealUndergroundViewsHigh: 90000,
+    tooFewViews: 60,
+    tooManyViews: 2000000,
     velocitySaturationViewsPerDay: 3500,
   },
 
   penalties: {
-    spamMultiplier: 0.58,
+    spamMultiplier: 0.28,
     nonMusicCap: 4.2,
     likelyShortCap: 3.4,
     riskyMetadataCap: 5.2,
@@ -54,8 +63,12 @@ const MUSIC_INTENT_TERMS = [
   'official audio',
   'provided to youtube',
   'original mix',
+  'dancefloor mix',
   'extended mix',
+  'club mix',
   'radio edit',
+  'dub mix',
+  'vocal mix',
   'premiere',
   'single',
   'ep',
@@ -73,9 +86,15 @@ const NICHE_TERMS = [
   'dub',
   'ukg',
   'uk garage',
+  'two step',
+  '2-step',
+  'uk funky',
   '2-step',
   '2 step',
   'garage',
+  'soulful house',
+  'neo-soul',
+  'r&b',
   'deep house',
   'minimal',
   'breaks',
@@ -120,10 +139,6 @@ function clamp(value, min, max) {
   const normalized = Number(value)
   if (!Number.isFinite(normalized)) return min
   return Math.min(max, Math.max(min, normalized))
-}
-
-function clamp01(value) {
-  return clamp(value, 0, 1)
 }
 
 function safeNumber(value, fallback = 0) {
@@ -186,43 +201,13 @@ function getTrackAgeDays(publishedAt) {
   return Math.max(0, Math.floor((nowMs - publishedAtMs) / 86_400_000))
 }
 
-function parseIsoDuration(duration = '') {
-  const value = String(duration || '').trim()
-
-  const match = value.match(/^P(?:T)?(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/i)
-  if (!match) return null
-
-  const hours = safeNumber(match[1], 0)
-  const minutes = safeNumber(match[2], 0)
-  const seconds = safeNumber(match[3], 0)
-
-  return (hours * 3600) + (minutes * 60) + seconds
-}
-
 function parseDurationToSeconds(durationText = '', durationSeconds = null) {
-  const explicitSeconds = safeNumber(durationSeconds, NaN)
-  if (Number.isFinite(explicitSeconds) && explicitSeconds >= 0) {
-    return explicitSeconds
-  }
+  const seconds = parseDurationSeconds({
+    duration: durationText,
+    durationSeconds,
+  })
 
-  const isoSeconds = parseIsoDuration(durationText)
-  if (Number.isFinite(isoSeconds)) {
-    return isoSeconds
-  }
-
-  const parts = String(durationText || '')
-    .split(':')
-    .map((part) => Number(part))
-
-  if (parts.length === 2 && parts.every(Number.isFinite)) {
-    return (parts[0] * 60) + parts[1]
-  }
-
-  if (parts.length === 3 && parts.every(Number.isFinite)) {
-    return (parts[0] * 3600) + (parts[1] * 60) + parts[2]
-  }
-
-  return 0
+  return Number.isFinite(seconds) ? seconds : 0
 }
 
 function logScaledScore(value, saturationValue) {
@@ -308,9 +293,9 @@ function wilsonLowerBound(successes, trials, z = 1.28155) {
 }
 
 function getTrackStats(track) {
-  const views = Math.max(safeNumber(track?.views ?? track?.viewCount, 0), 0)
-  const likes = Math.max(safeNumber(track?.likes ?? track?.likeCount, 0), 0)
-  const comments = Math.max(safeNumber(track?.comments ?? track?.commentCount, 0), 0)
+  const views = Math.max(parseCount(track?.views ?? track?.viewCount, 0), 0)
+  const likes = Math.max(parseCount(track?.likes ?? track?.likeCount, 0), 0)
+  const comments = Math.max(parseCount(track?.comments ?? track?.commentCount, 0), 0)
 
   const ageDays = getTrackAgeDays(track?.publishedAt)
   const durationSeconds = parseDurationToSeconds(track?.duration, track?.durationSeconds)
@@ -331,11 +316,11 @@ function getTrackStats(track) {
 function getTextBundle(track) {
   const title = String(track?.title || '')
   const description = String(track?.description || '')
-  const channelTitle = String(track?.channelTitle || track?.artist || '')
+  const channelTitle = String(track?.sourceChannelTitle || track?.channelTitle || track?.artist || '')
   const tags = Array.isArray(track?.tags) ? track.tags.map(String) : []
 
-  const fullText = `${title} ${description} ${channelTitle} ${tags.join(' ')}`
-  const musicText = `${title} ${description} ${tags.join(' ')}`
+  const fullText = `${title} ${description} ${channelTitle} ${track?.genre || ''} ${track?.vibe || ''} ${tags.join(' ')}`
+  const musicText = `${title} ${description} ${track?.genre || ''} ${track?.vibe || ''} ${tags.join(' ')}`
 
   return {
     title,
@@ -352,16 +337,15 @@ function getTextBundle(track) {
 function scoreMusicAuthenticity(track, stats) {
   const {
     title,
-    description,
-    channelTitle,
     musicText,
     fullText,
     normalizedChannelTitle,
   } = getTextBundle(track)
 
+  const musicLikelihood = getMusicLikelihoodDetails(track)
   const categoryId = String(track?.categoryId ?? '')
   const flags = []
-  let score = 2.8
+  let score = 1.8 + (musicLikelihood.score * 0.72)
 
   const hasArtistTitlePattern =
     /\S+\s[-–—]\s\S+/.test(title) &&
@@ -369,48 +353,48 @@ function scoreMusicAuthenticity(track, stats) {
     !containsAny(title, NEWS_TERMS)
 
   if (hasArtistTitlePattern) {
-    score += 2.0
+    score += 0.35
     flags.push('artist-title-pattern')
   }
 
-  if (normalizedChannelTitle.endsWith(' - topic')) {
-    score += 1.8
+  if (normalizedChannelTitle.endsWith(' - topic') || musicLikelihood.topicChannel || isTopicChannel(track)) {
+    score += 0.45
     flags.push('topic-channel')
   }
 
   if (categoryId === '10') {
-    score += 1.3
+    score += 0.35
     flags.push('youtube-music-category')
   }
 
   if (stats.durationSeconds >= 120 && stats.durationSeconds <= 540) {
-    score += 1.5
+    score += 0.35
     flags.push('track-length')
   } else if (stats.durationSeconds >= 90 && stats.durationSeconds <= 720) {
-    score += 0.8
+    score += 0.2
     flags.push('acceptable-audio-length')
   } else if (stats.durationSeconds > 720) {
     if (containsAny(fullText, MIX_TERMS)) {
-      score += 0.6
+      score += 0.15
       flags.push('long-mix-format')
     } else {
-      score -= 1.3
+      score -= 0.8
       flags.push('long-non-track-format')
     }
   } else if (stats.durationSeconds > 0) {
-    score -= 2.4
+    score -= 1.4
     flags.push('short-duration-risk')
   }
 
   const intentMatches = uniqueMatches(musicText, MUSIC_INTENT_TERMS)
   if (intentMatches.length > 0) {
-    score += Math.min(1.8, intentMatches.length * 0.42)
+    score += Math.min(0.6, intentMatches.length * 0.15)
     flags.push('music-intent-metadata')
   }
 
   const nicheMatches = uniqueMatches(musicText, NICHE_TERMS)
   if (nicheMatches.length > 0) {
-    score += Math.min(2.2, nicheMatches.length * 0.5)
+    score += Math.min(0.75, nicheMatches.length * 0.16)
     flags.push('niche-genre-signals')
   }
 
@@ -426,21 +410,27 @@ function scoreMusicAuthenticity(track, stats) {
   }
 
   if (containsAny(fullText, PLAYLIST_TERMS)) {
+    const longCollection = stats.durationSeconds > 1200
     const acceptableMix = containsAny(fullText, MIX_TERMS)
-    score -= acceptableMix ? 0.4 : 1.4
+    score -= longCollection && !acceptableMix ? 1.0 : 0.15
     flags.push('playlist-format')
   }
 
-  const isLikelyMusic =
-    score >= 5.5 ||
-    normalizedChannelTitle.endsWith(' - topic') ||
-    categoryId === '10' ||
-    hasArtistTitlePattern
+  if (musicLikelihood.nonMusicMatches.length > 0 && !musicLikelihood.isLikelyMusic) {
+    score -= 1.8
+    flags.push('non-music-intent')
+  }
+
+  if (musicLikelihood.strongMatches.length > 0) flags.push('strong-music-signal')
+  if (musicLikelihood.genreMatches.length >= 2) flags.push('specific-genre-metadata')
 
   return {
     score: roundScore(score),
-    isLikelyMusic,
+    isLikelyMusic: musicLikelihood.isLikelyMusic,
     flags,
+    musicLikelihood,
+    intentMatches,
+    nicheMatches,
   }
 }
 
@@ -451,6 +441,7 @@ function scoreSpamRisk(track, stats) {
     fullText,
   } = getTextBundle(track)
 
+  const musicLikelihood = getMusicLikelihoodDetails(track)
   const flags = []
   let risk = 0
 
@@ -465,6 +456,11 @@ function scoreSpamRisk(track, stats) {
   if (containsAny(fullText, SHORTS_TERMS)) {
     risk += 4.0
     flags.push('shorts-keyword')
+  }
+
+  if (musicLikelihood.nonMusicMatches.length > 0) {
+    risk += musicLikelihood.isLikelyMusic ? 1.5 : 4.2
+    flags.push('non-music-intent')
   }
 
   if (containsAny(fullText, REACTION_TERMS)) {
@@ -487,8 +483,8 @@ function scoreSpamRisk(track, stats) {
     flags.push('cover-content')
   }
 
-  if (containsAny(fullText, PLAYLIST_TERMS) && !containsAny(fullText, MIX_TERMS)) {
-    risk += 2.4
+  if (containsAny(fullText, PLAYLIST_TERMS) && stats.durationSeconds > 1200 && !containsAny(fullText, MIX_TERMS)) {
+    risk += 1.8
     flags.push('playlist-or-compilation')
   }
 
@@ -542,7 +538,7 @@ function scoreSpamRisk(track, stats) {
   }
 
   if (stats.views > 500 && stats.likes === 0 && stats.comments === 0 && stats.ageDays > 30) {
-    risk += 1.8
+    risk += musicLikelihood.score >= 8 ? 0.4 : 1.3
     flags.push('no-visible-engagement')
   }
 
@@ -602,11 +598,22 @@ function scoreEngagement(track, stats, profile) {
 
   const interactionDepthScore = roundScore(logScaledScore(stats.interactions, 3500))
 
-  const score = roundScore(
+  let score = roundScore(
     (likeRateScore * 0.56) +
     (commentRateScore * 0.28) +
     (interactionDepthScore * 0.16),
   )
+
+  if (stats.views > 0 && stats.likes === 0 && stats.comments === 0) {
+    const musicLikelihood = getMusicLikelihoodDetails(track).score
+    const noVisibleEngagementFloor = musicLikelihood >= 8
+      ? 3.6
+      : stats.views >= 1000
+        ? 2.8
+        : 2.2
+
+    score = Math.max(score, noVisibleEngagementFloor)
+  }
 
   return {
     score,
@@ -722,6 +729,7 @@ function scoreStayingPower(stats, engagementScore) {
 
 function scoreConfidence(track, stats) {
   const flags = []
+  const musicLikelihood = getMusicLikelihoodDetails(track).score
 
   const viewConfidence = logScaledScore(stats.views, 150000)
   const interactionConfidence = logScaledScore(stats.interactions, 4000)
@@ -732,8 +740,8 @@ function scoreConfidence(track, stats) {
   let completeness = 10
 
   if (stats.views <= 0) completeness -= 4
-  if (stats.likes <= 0) completeness -= 1.3
-  if (stats.comments <= 0) completeness -= 0.8
+  if (stats.likes <= 0) completeness -= musicLikelihood >= 8 ? 0.45 : 1.1
+  if (stats.comments <= 0) completeness -= musicLikelihood >= 8 ? 0.35 : 0.7
   if (!hasValidDate(track?.publishedAt)) completeness -= 2
   if (stats.durationSeconds <= 0) completeness -= 1.2
   if (!track?.title) completeness -= 1.5
@@ -848,6 +856,50 @@ function applyCaps(score, { authenticity, spamRisk, flags }, profile) {
   return cappedScore
 }
 
+function getEngagementLift(engagementScore) {
+  if (engagementScore >= 8.5) return 0.65
+  if (engagementScore >= 7) return 0.42
+  if (engagementScore >= 5.8) return 0.22
+  return 0
+}
+
+function getLowViewBoost(views) {
+  if (views <= 0) return -0.35
+  if (views < 100) return -0.15
+  if (views <= 1000) return 0.25
+  if (views <= 5000) return 0.35
+  if (views <= 25000) return 0.25
+  if (views <= 90000) return 0.18
+  if (views >= 1000000) return -0.9
+  if (views >= 500000) return -0.45
+  return 0
+}
+
+function getNicheGenreBoost(musicLikelihood) {
+  const genreCount = musicLikelihood?.genreMatches?.length || 0
+  if (genreCount >= 4) return 0.4
+  if (genreCount >= 2) return 0.35
+  if (genreCount === 1) return 0.18
+  return 0
+}
+
+function getQualityBoost({ authenticity, confidence }) {
+  if (authenticity >= 8.2 && confidence >= 4) return 0.15
+  if (authenticity >= 7) return 0.15
+  return 0
+}
+
+function getAdditionalPenalty({ spamRisk, authenticity, flags, stats, profile }) {
+  let penalty = spamRisk * profile.penalties.spamMultiplier
+
+  if (stats.views >= 1000000) penalty += 0.5
+  if (flags.includes('long-non-track-format')) penalty += 0.35
+  if (flags.includes('playlist-or-compilation')) penalty += 0.35
+  if (flags.includes('non-music-intent') && authenticity < 7) penalty += 0.8
+
+  return Number(penalty.toFixed(2))
+}
+
 function mergeProfile(overrides = {}) {
   return {
     ...DEFAULT_PROFILE,
@@ -904,13 +956,36 @@ function evaluateGemScore(track, profileOverrides = {}) {
     velocity: velocity.score,
     stayingPower: stayingPower.score,
     confidence: confidence.score,
+    musicLikelihood: authenticity.musicLikelihood.score,
     spamRisk: spamRisk.score,
   }
 
   const baseDiscoveryScore = weightedScore(components, profile.weights)
-  const penaltyApplied = spamRisk.score * profile.penalties.spamMultiplier
+  const engagementBoost = getEngagementLift(engagement.score)
+  const lowViewBoost = getLowViewBoost(stats.views)
+  const nicheGenreBoost = getNicheGenreBoost(authenticity.musicLikelihood)
+  const topicBoost = authenticity.musicLikelihood.topicChannel || isTopicChannel(track) ? 0.15 : 0
+  const qualityBoost = getQualityBoost({
+    authenticity: authenticity.score,
+    confidence: confidence.score,
+  })
+  const penaltyApplied = getAdditionalPenalty({
+    spamRisk: spamRisk.score,
+    authenticity: authenticity.score,
+    flags,
+    stats,
+    profile,
+  })
 
-  let gemScore = baseDiscoveryScore - penaltyApplied
+  let gemScore =
+    baseDiscoveryScore +
+    engagementBoost +
+    lowViewBoost +
+    nicheGenreBoost +
+    topicBoost +
+    qualityBoost -
+    penaltyApplied
+
   gemScore = applyCaps(gemScore, {
     authenticity: authenticity.score,
     spamRisk: spamRisk.score,
@@ -919,23 +994,34 @@ function evaluateGemScore(track, profileOverrides = {}) {
 
   const qualityBase = weightedScore({
     authenticity: authenticity.score,
+    musicLikelihood: authenticity.musicLikelihood.score,
     engagement: engagement.score,
     confidence: confidence.score,
     stayingPower: stayingPower.score,
     undergroundFit: undergroundFit.score,
   }, profile.qualityWeights)
 
-  let qualityScore = qualityBase - (spamRisk.score * 0.38)
+  let qualityScore = qualityBase - (spamRisk.score * 0.18)
   qualityScore = applyCaps(qualityScore, {
     authenticity: authenticity.score,
     spamRisk: spamRisk.score,
     flags,
   }, profile)
 
-  const roundedGemScore = roundScore(gemScore)
+  const roundedGemScore = Number(clamp(gemScore, 0, 9.6).toFixed(1))
   const roundedQualityScore = roundScore(qualityScore)
 
   const scoreBreakdown = {
+    musicLikelihood: authenticity.musicLikelihood.score,
+    baseGemScore: Number(baseDiscoveryScore.toFixed(2)),
+    engagementBoost: Number(engagementBoost.toFixed(2)),
+    lowViewBoost: Number(lowViewBoost.toFixed(2)),
+    nicheGenreBoost: Number(nicheGenreBoost.toFixed(2)),
+    topicBoost: Number(topicBoost.toFixed(2)),
+    qualityBoost: Number(qualityBoost.toFixed(2)),
+    penalties: Number(penaltyApplied.toFixed(2)),
+    finalGemScore: roundedGemScore,
+
     engagementScore: engagement.score,
     likeRateScore: engagement.likeRateScore,
     commentRateScore: engagement.commentRateScore,

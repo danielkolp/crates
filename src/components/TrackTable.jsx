@@ -8,10 +8,13 @@ function TrackTable({
   currentTrackId,
   isPlaying,
   playbackProgress,
+  likedTrackIds = [],
   onLikeTrack,
   onSelectTrack,
   onToggleTrackPlayback,
 }) {
+  const likedTrackIdSet = new Set(likedTrackIds)
+
   if (isLoading) {
     return (
       <section className="panel p-4">
@@ -39,10 +42,10 @@ function TrackTable({
   }
 
   return (
-    <section className="panel min-h-0 overflow-hidden">
-      <div className="hide-scrollbar overflow-x-auto">
-        <div className="min-w-[1120px]">
-          <div className="grid grid-cols-[40px_minmax(0,2.6fr)_minmax(0,1.1fr)_0.8fr_0.8fr_0.8fr_0.8fr_160px] gap-2 border-b border-zinc-200 px-4 py-3 text-xs font-semibold uppercase tracking-[0.08em] text-zinc-500">
+    <section className="panel min-h-0 overflow-visible">
+      <div className="overflow-visible">
+        <div className="w-full">
+          <div className="track-table-grid grid border-b border-zinc-200 px-3 py-3 text-xs font-semibold uppercase tracking-[0.08em] text-zinc-500">
             <span>#</span>
             <span>Track</span>
             <span>Artist</span>
@@ -61,6 +64,7 @@ function TrackTable({
                 isSelected={selectedTrackId === track.id}
                 isPlaying={isPlaying && currentTrackId === track.id}
                 playbackProgress={isPlaying && currentTrackId === track.id ? playbackProgress : 0}
+                isLiked={likedTrackIdSet.has(track.id)}
                 onLikeTrack={onLikeTrack}
                 onSelect={() => onSelectTrack(track.id)}
                 onPlay={() => onToggleTrackPlayback(track.id)}

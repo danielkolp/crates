@@ -10,7 +10,7 @@ import CrateList from './components/CrateList'
 import EmptyState from './components/EmptyState'
 import SwipeMode from './components/SwipeMode'
 import TrackCollectionView from './components/TrackCollectionView'
-import mockCrates from './data/mockCrates'
+
 import {
   getStoredCrates,
   getHistory,
@@ -22,7 +22,15 @@ import {
   getGemTrackIds,
   saveGemTrackIds,
 } from './utils/storage'
-import { addTrackToCrate as addTrackToCrateApi, getLastSearchStatus, searchTracks } from './api/youtubeClient'
+
+import {
+  addTrackToCrate as addTrackToCrateApi,
+  getLastSearchStatus,
+  getYouTubeGemScore,
+  getYouTubeGemScoreDetails,
+  logYouTubeGemScore,
+  searchTracks,
+} from './api/youtubeClient'
 
 const SCREEN_TO_PATH = {
   digger: '/search',
@@ -32,10 +40,15 @@ const SCREEN_TO_PATH = {
   gems: '/gems',
   history: '/history',
 }
+
 const THEME_STORAGE_KEY = 'music-ui-theme-mode'
+
+const DEFAULT_CRATES = []
 
 const DEFAULT_FILTERS = {
   genre: 'all',
+  style: 'all',
+  format: 'all',
   vibe: 'all',
   maxViews: 'any',
   minGemScore: 'any',
@@ -47,6 +60,12 @@ const DEFAULT_FILTERS = {
   hideShorts: true,
   sortBy: 'gemScore',
   activeTags: [],
+}
+
+const DEFAULT_SEARCH_STATUS = {
+  source: 'youtube',
+  usedFallback: false,
+  message: 'Ready for live YouTube search.',
 }
 
 function withLockedTrackFilters(filters) {
@@ -95,7 +114,35 @@ function getHistoryActionLabel(action) {
     return 'Skipped'
   }
 
+  if (action === 'selected') {
+    return 'Selected'
+  }
+
+  if (action === 'played') {
+    return 'Played'
+  }
+
   return action
+}
+
+function getHistoryActionClass(action) {
+  if (action === 'skipped') {
+    return 'border-zinc-300 bg-zinc-100 text-zinc-600'
+  }
+
+  if (action === 'saved') {
+    return 'border-emerald-300 bg-emerald-50 text-emerald-700'
+  }
+
+  if (action === 'gem') {
+    return 'border-amber-300 bg-amber-50 text-amber-800'
+  }
+
+  if (action === 'played') {
+    return 'border-sky-300 bg-sky-50 text-sky-700'
+  }
+
+  return 'border-zinc-300 bg-zinc-50 text-zinc-700'
 }
 
 function App() {
@@ -103,7 +150,6 @@ function App() {
   const navigate = useNavigate()
 
   const activeScreen = getActiveScreen(location.pathname)
-  const defaultCrates = useMemo(() => mockCrates.map((crate) => ({ ...crate, trackIds: [] })), [])
 
   const [isDarkMode, setIsDarkMode] = useState(() => {
     try {
@@ -112,15 +158,12 @@ function App() {
       return false
     }
   })
+
   const [filters, setFilters] = useState(DEFAULT_FILTERS)
   const [digDeeperTags, setDigDeeperTags] = useState([])
   const [digDeeperActive, setDigDeeperActive] = useState(false)
   const [isLoadingTracks, setIsLoadingTracks] = useState(false)
-  const [searchStatus, setSearchStatus] = useState({
-    source: 'loading',
-    usedFallback: false,
-    message: '',
-  })
+  const [searchStatus, setSearchStatus] = useState(DEFAULT_SEARCH_STATUS)
   const [allTracks, setAllTracks] = useState([])
   const [trackCatalog, setTrackCatalog] = useState({})
   const [selectedTrackId, setSelectedTrackId] = useState(null)
@@ -129,12 +172,14 @@ function App() {
   const [playerProgress, setPlayerProgress] = useState(0)
   const [volume, setVolume] = useState(72)
   const [playerReservedHeight, setPlayerReservedHeight] = useState(112)
-  const [crates, setCrates] = useState(() => getStoredCrates(defaultCrates))
+  const [crates, setCrates] = useState(() => getStoredCrates(DEFAULT_CRATES))
   const [likedTrackIds, setLikedTrackIds] = useState(() => getLikedTrackIds())
   const [gemTrackIds, setGemTrackIds] = useState(() => getGemTrackIds())
   const [history, setHistory] = useState(() => getHistory())
   const [swipedTrackIds, setSwipedTrackIds] = useState([])
   const [searchRefreshKey, setSearchRefreshKey] = useState(0)
+  const [swipeTheme, setSwipeTheme] = useState(null)
+
   const autoplayNextSwipeRef = useRef(false)
 
   const filteredTracks = allTracks
@@ -143,18 +188,45 @@ function App() {
   const selectedTrack = selectedTrackId ? tracksById[selectedTrackId] : null
   const currentTrack = currentTrackId ? tracksById[currentTrackId] : null
   const swipeQueue = filteredTracks
+  const likedTrackIdSet = useMemo(() => new Set(likedTrackIds), [likedTrackIds])
+
   const swipeVisitedSet = useMemo(() => new Set(swipedTrackIds), [swipedTrackIds])
+
   const remainingSwipeTracks = useMemo(
     () => swipeQueue.filter((track) => !swipeVisitedSet.has(track.id)),
     [swipeQueue, swipeVisitedSet],
   )
+
   const swipeTrack = remainingSwipeTracks[0] ?? null
   const nextSwipeTracks = remainingSwipeTracks.slice(1, 4)
-  const queueCount = activeScreen === 'swipe'
-    ? (isLoadingTracks ? 0 : remainingSwipeTracks.length)
-    : playbackQueue.length
+
+  const queueCount =
+    activeScreen === 'swipe'
+      ? isLoadingTracks
+        ? 0
+        : remainingSwipeTracks.length
+      : playbackQueue.length
+
   const shouldApplyDarkMode = isDarkMode && activeScreen !== 'swipe'
+  const shouldApplySwipeDarkMode = isDarkMode && activeScreen === 'swipe'
   const shouldApplyChromeDarkMode = isDarkMode
+  const shouldUseSwipeTheme = activeScreen === 'swipe' && swipeTheme
+
+  const shouldShowSearchNotice =
+    Boolean(searchStatus.message) &&
+    !isLoadingTracks &&
+    (searchStatus.usedFallback || allTracks.length === 0)
+
+  const swipeThemeStyle =
+    shouldUseSwipeTheme
+      ? {
+          '--swipe-main': swipeTheme.mainColor,
+          '--swipe-surface': swipeTheme.surfaceColor,
+          '--swipe-card': swipeTheme.cardColor,
+          '--swipe-accent': swipeTheme.accentColor,
+          '--swipe-text': swipeTheme.textColor,
+        }
+      : undefined
 
   const historyItems = useMemo(
     () =>
@@ -172,6 +244,18 @@ function App() {
       navigate('/search', { replace: true })
     }
   }, [location.pathname, navigate])
+
+  useEffect(() => {
+    window.getYouTubeGemScore = getYouTubeGemScore
+    window.getYouTubeGemScoreDetails = getYouTubeGemScoreDetails
+    window.logYouTubeGemScore = logYouTubeGemScore
+
+    return () => {
+      delete window.getYouTubeGemScore
+      delete window.getYouTubeGemScoreDetails
+      delete window.logYouTubeGemScore
+    }
+  }, [])
 
   useEffect(() => {
     saveCrates(crates)
@@ -193,38 +277,71 @@ function App() {
     try {
       window.localStorage.setItem(THEME_STORAGE_KEY, isDarkMode ? 'dark' : 'light')
     } catch {
-      // Ignore write failures (private mode / blocked storage).
+      // Ignore write failures.
     }
   }, [isDarkMode])
 
   useEffect(() => {
     let isCancelled = false
+
     setIsLoadingTracks(true)
+
     const searchTimer = window.setTimeout(() => {
       async function runSearch() {
-        const tracks = await searchTracks('', withLockedTrackFilters({
-          ...filters,
-          digDeeperTags: digDeeperActive ? digDeeperTags : [],
-          refreshKey: searchRefreshKey,
-        }))
+        try {
+          const tracks = await searchTracks(
+            '',
+            withLockedTrackFilters({
+              ...filters,
+              digDeeperTags: digDeeperActive ? digDeeperTags : [],
+              refreshKey: searchRefreshKey,
+            }),
+          )
 
-        if (isCancelled) {
-          return
-        }
+          if (isCancelled) {
+            return
+          }
 
-        setAllTracks(tracks)
-        setTrackCatalog((prevCatalog) => {
-          const nextCatalog = { ...prevCatalog }
-          tracks.forEach((track) => {
-            nextCatalog[track.id] = track
+          setAllTracks(tracks)
+
+          setTrackCatalog((prevCatalog) => {
+            const nextCatalog = { ...prevCatalog }
+
+            tracks.forEach((track) => {
+              nextCatalog[track.id] = track
+            })
+
+            return nextCatalog
           })
-          return nextCatalog
-        })
-        setSelectedTrackId((prev) => (prev && tracks.some((track) => track.id === prev) ? prev : tracks[0]?.id ?? null))
-        setCurrentTrackId((prev) => (prev && tracks.some((track) => track.id === prev) ? prev : tracks[0]?.id ?? null))
-        setSwipedTrackIds([])
-        setSearchStatus(getLastSearchStatus())
-        setIsLoadingTracks(false)
+
+          setSelectedTrackId((prev) =>
+            prev && tracks.some((track) => track.id === prev) ? prev : tracks[0]?.id ?? null,
+          )
+
+          setCurrentTrackId((prev) =>
+            prev && tracks.some((track) => track.id === prev) ? prev : tracks[0]?.id ?? null,
+          )
+
+          setSwipedTrackIds([])
+          setSearchStatus(getLastSearchStatus())
+        } catch (error) {
+          console.error('[CrateDigger][app] search failed', error)
+
+          if (!isCancelled) {
+            setAllTracks([])
+            setSelectedTrackId(null)
+            setCurrentTrackId(null)
+            setSearchStatus({
+              source: 'youtube',
+              usedFallback: false,
+              message: 'Search failed. Check your YouTube API key or quota.',
+            })
+          }
+        } finally {
+          if (!isCancelled) {
+            setIsLoadingTracks(false)
+          }
+        }
       }
 
       runSearch()
@@ -250,6 +367,7 @@ function App() {
       if (shouldAutoplay) {
         setIsPlaying(true)
       }
+
       return undefined
     }
 
@@ -261,6 +379,10 @@ function App() {
   }, [activeScreen, currentTrackId, swipeTrack])
 
   function appendHistory(trackId, action) {
+    if (!trackId) {
+      return
+    }
+
     setHistory((prev) => {
       const nextEntry = buildHistoryEntry(trackId, action)
       return [nextEntry, ...prev].slice(0, 80)
@@ -314,7 +436,12 @@ function App() {
     }
 
     setLikedTrackIds((prev) => (prev.includes(trackId) ? prev : [trackId, ...prev]))
-    await addTrackToCrateApi(trackId, 'liked-tracks')
+
+    try {
+      await addTrackToCrateApi(trackId, 'liked-tracks')
+    } catch (error) {
+      console.error('[CrateDigger][app] failed to add liked track', error)
+    }
   }
 
   async function handleGemTrack(trackId) {
@@ -324,14 +451,22 @@ function App() {
 
     setGemTrackIds((prev) => (prev.includes(trackId) ? prev : [trackId, ...prev]))
     setLikedTrackIds((prev) => (prev.includes(trackId) ? prev : [trackId, ...prev]))
-    await addTrackToCrateApi(trackId, 'gems')
+
+    try {
+      await addTrackToCrateApi(trackId, 'gems')
+    } catch (error) {
+      console.error('[CrateDigger][app] failed to add gem track', error)
+    }
   }
 
   function handleRemoveFromCrate(trackId, crateId) {
     setCrates((prev) =>
       prev.map((crate) =>
         crate.id === crateId
-          ? { ...crate, trackIds: crate.trackIds.filter((id) => id !== trackId) }
+          ? {
+              ...crate,
+              trackIds: crate.trackIds.filter((id) => id !== trackId),
+            }
           : crate,
       ),
     )
@@ -366,10 +501,12 @@ function App() {
     }
 
     autoplayNextSwipeRef.current = true
+
     const nextSwiped = new Set(swipedTrackIds)
     nextSwiped.add(swipeTrack.id)
 
     const hasConsumedSwipeBatch = swipeQueue.length > 0 && nextSwiped.size >= swipeQueue.length
+
     if (hasConsumedSwipeBatch) {
       setSwipedTrackIds([])
       setIsLoadingTracks(true)
@@ -381,6 +518,7 @@ function App() {
 
     if (forcePlaybackAdvance) {
       const nextTrack = swipeQueue.find((track) => !nextSwiped.has(track.id))
+
       if (nextTrack) {
         setCurrentTrackId(nextTrack.id)
         setSelectedTrackId(nextTrack.id)
@@ -445,8 +583,12 @@ function App() {
 
   return (
     <div
-      className={`app-grid overflow-hidden bg-zinc-100 text-zinc-900 ${shouldApplyDarkMode ? 'theme-dark' : ''}`}
-      style={{ height: `calc(100dvh - ${playerReservedHeight}px)` }}
+      className={`app-grid overflow-hidden bg-zinc-100 text-zinc-900 ${
+        shouldApplyDarkMode ? 'theme-dark' : ''
+      } ${shouldUseSwipeTheme ? 'theme-swipe' : ''} ${
+        shouldApplySwipeDarkMode ? 'theme-swipe-dark' : ''
+      }`}
+      style={{ height: `calc(100dvh - ${playerReservedHeight}px)`, ...swipeThemeStyle }}
     >
       <Sidebar
         activeScreen={activeScreen}
@@ -468,7 +610,9 @@ function App() {
         <div
           className={[
             'grid min-h-0 flex-1 overflow-hidden',
-            activeScreen === 'digger' ? 'grid-cols-1 xl:grid-cols-[minmax(0,1fr)_20rem]' : 'grid-cols-1',
+            activeScreen === 'digger'
+              ? 'grid-cols-1 xl:grid-cols-[minmax(0,1fr)_20rem]'
+              : 'grid-cols-1',
           ].join(' ')}
         >
           <main
@@ -479,15 +623,17 @@ function App() {
           >
             <Routes>
               <Route path="/" element={<Navigate to="/search" replace />} />
+
               <Route
                 path="/search"
                 element={
                   <div className="space-y-4">
-                    {searchStatus.usedFallback && (
+                    {shouldShowSearchNotice && (
                       <div className="border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950">
                         {searchStatus.message}
                       </div>
                     )}
+
                     <FilterBar
                       tracks={allTracks}
                       filters={filters}
@@ -496,6 +642,7 @@ function App() {
                       digDeeperActive={digDeeperActive}
                       onClearDigDeeper={handleClearDigDeeper}
                     />
+
                     <TrackTable
                       tracks={filteredTracks}
                       isLoading={isLoadingTracks}
@@ -505,24 +652,33 @@ function App() {
                       currentTrackId={currentTrackId}
                       isPlaying={isPlaying}
                       playbackProgress={playerProgress}
+                      likedTrackIds={likedTrackIds}
                       onLikeTrack={handleLikeTrack}
                     />
                   </div>
                 }
               />
+
               <Route
                 path="/swipe"
                 element={
                   <SwipeMode
                     track={swipeTrack}
                     nextTracks={nextSwipeTracks}
+                    tracks={allTracks}
+                    filters={filters}
+                    onChangeFilters={setFilters}
                     isLoading={isLoadingTracks}
+                    isDarkMode={shouldApplyChromeDarkMode}
+                    isLiked={Boolean(swipeTrack && likedTrackIdSet.has(swipeTrack.id))}
                     onSave={handleSwipeSave}
                     onSkip={handleSwipeSkip}
                     onGem={handleSwipeGem}
+                    onThemeChange={setSwipeTheme}
                   />
                 }
               />
+
               <Route
                 path="/crates"
                 element={
@@ -536,6 +692,7 @@ function App() {
                   />
                 }
               />
+
               <Route
                 path="/liked"
                 element={
@@ -548,11 +705,13 @@ function App() {
                     selectedTrackId={selectedTrackId}
                     onSelectTrack={handleSelectTrack}
                     onPlayTrack={handlePlayTrack}
+                    likedTrackIds={likedTrackIds}
                     onRemoveTrack={handleRemoveFromLiked}
                     sharePath="/liked"
                   />
                 }
               />
+
               <Route
                 path="/gems"
                 element={
@@ -570,13 +729,16 @@ function App() {
                   />
                 }
               />
+
               <Route
                 path="/history"
                 element={
                   <section className="panel space-y-3 p-4">
                     <header className="flex items-center justify-between border-b border-zinc-200 pb-3">
                       <h2 className="text-lg font-semibold">Your Dig History</h2>
-                      <span className="mono text-xs text-zinc-500">{historyItems.length} tracks</span>
+                      <span className="mono text-xs text-zinc-500">
+                        {historyItems.length} tracks
+                      </span>
                     </header>
 
                     {historyItems.length === 0 && (
@@ -589,50 +751,55 @@ function App() {
                     {historyItems.length > 0 && (
                       <div className="space-y-2">
                         {historyItems.map((item, index) => (
-                          <button
+                          <div
                             key={item.id}
-                            type="button"
-                            onClick={() => handleSelectTrack(item.track.id)}
                             className="tooltip-anchor flex w-full items-center justify-between rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-3 text-left transition hover:border-zinc-400 hover:bg-white"
                             data-tooltip="Select this history track"
                           >
-                            <div className="flex min-w-0 items-center gap-3">
+                            <button
+                              type="button"
+                              onClick={() => handleSelectTrack(item.track.id)}
+                              className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                            >
                               <span className="mono hidden text-xs text-zinc-500 sm:inline">
                                 {String(index + 1).padStart(2, '0')}
                               </span>
+
                               <img
                                 src={item.track.artworkUrl}
                                 alt={item.track.title}
                                 className="h-10 w-10 rounded-lg border border-zinc-200 object-cover"
                                 loading="lazy"
                               />
+
                               <div className="min-w-0">
                                 <p className="truncate text-sm font-medium">{item.track.title}</p>
                                 <p className="truncate text-xs text-zinc-500">{item.track.artist}</p>
                               </div>
-                            </div>
+                            </button>
 
                             <div className="ml-3 flex items-center gap-2">
-                              <span className="chip capitalize">{getHistoryActionLabel(item.action)}</span>
+                              <span className={`chip capitalize ${getHistoryActionClass(item.action)}`}>
+                                {getHistoryActionLabel(item.action)}
+                              </span>
+
                               <button
                                 type="button"
-                                onClick={(event) => {
-                                  event.stopPropagation()
-                                  handlePlayTrack(item.track.id)
-                                }}
-                                className="tooltip-anchor rounded-lg border border-zinc-300 px-2 py-1 text-xs font-medium transition hover:border-zinc-900 hover:bg-zinc-900 hover:text-white"
+                                onClick={() => handlePlayTrack(item.track.id)}
+                                className="tooltip-anchor tooltip-left rounded-lg border border-zinc-300 px-2 py-1 text-xs font-medium transition hover:border-emerald-500 hover:bg-emerald-500 hover:text-white"
                                 data-tooltip="Play this track"
                               >
                                 Play
                               </button>
                             </div>
-                          </button>
+                          </div>
                         ))}
                       </div>
                     )}
                   </section>
                 }
               />
+
               <Route path="/settings" element={<Navigate to="/search" replace />} />
             </Routes>
           </main>
@@ -643,6 +810,8 @@ function App() {
               isPlaying={isPlaying && currentTrackId === selectedTrack?.id}
               onToggleTrackPlayback={handleToggleTrackPlayback}
               onLikeTrack={handleLikeTrack}
+              isLiked={Boolean(selectedTrack && likedTrackIdSet.has(selectedTrack.id))}
+              onStartDigging={handleStartDigging}
             />
           )}
         </div>
@@ -656,6 +825,7 @@ function App() {
         volume={volume}
         onTogglePlay={handleTogglePlayback}
         canSwipeActions={Boolean(swipeTrack)}
+        isSwipeTrackLiked={Boolean(swipeTrack && likedTrackIdSet.has(swipeTrack.id))}
         onSwipeSkip={handleBottomSwipeSkip}
         onSwipeSave={handleBottomSwipeSave}
         onSwipeGem={handleBottomSwipeGem}

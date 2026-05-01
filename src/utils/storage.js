@@ -1,3 +1,5 @@
+// storage.js - Utility functions for managing localStorage persistence of crates, liked tracks, gem tracks, and history. Provides functions to read/write structured data with error handling and default fallbacks. Also includes a helper to build history entries with unique IDs and timestamps.
+
 const STORAGE_KEYS = {
   crates: 'crate-digger/crates/v1',
   likedTrackIds: 'crate-digger/liked-track-ids/v1',

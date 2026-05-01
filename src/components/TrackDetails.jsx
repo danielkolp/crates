@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
+import { BsCheckLg, BsHeartFill, BsShareFill } from 'react-icons/bs'
 import EmptyState from './EmptyState'
 import ShareModal from './ShareModal'
-import YouTubePlayer from './YouTubePlayer'
 import { getTrackSharePayload } from '../utils/share'
 
 function compactNumber(value) {
@@ -13,34 +13,23 @@ function compactNumber(value) {
   }).format(value)
 }
 
-function getRelativeDateLabel(isoDate) {
-  const now = new Date()
-  const publishedDate = new Date(isoDate)
-  const diffMs = Math.max(now.getTime() - publishedDate.getTime(), 0)
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+const DETAIL_CARD_CLASS = 'track-details-card rounded-2xl border border-zinc-200 bg-white p-3 shadow-[0_1px_1px_rgba(0,0,0,0.02)]'
 
-  if (diffDays < 1) {
-    return 'Today'
-  }
+function getGemScoreTone(score) {
+  const value = Number(score) || 0
 
-  if (diffDays === 1) {
-    return '1 day ago'
-  }
-
-  if (diffDays < 30) {
-    return `${diffDays} days ago`
-  }
-
-  const diffMonths = Math.floor(diffDays / 30)
-  if (diffMonths < 12) {
-    return `${diffMonths} month${diffMonths > 1 ? 's' : ''} ago`
-  }
-
-  const diffYears = Math.floor(diffMonths / 12)
-  return `${diffYears} year${diffYears > 1 ? 's' : ''} ago`
+  if (value >= 7.5) return 'text-emerald-600'
+  if (value >= 5) return 'text-amber-600'
+  return 'text-red-600'
 }
 
-const DETAIL_CARD_CLASS = 'track-details-card rounded-2xl border border-zinc-200 bg-white p-3 shadow-[0_1px_1px_rgba(0,0,0,0.02)]'
+function getGemScoreFill(score) {
+  const value = Number(score) || 0
+
+  if (value >= 7.5) return '#059669'
+  if (value >= 5) return '#d97706'
+  return '#dc2626'
+}
 
 function StatIcon({ kind }) {
   if (kind === 'views') {
@@ -106,10 +95,10 @@ function StatIcon({ kind }) {
 function TrackDetails({
   track,
   isPlaying,
+  isLiked = false,
   onToggleTrackPlayback,
   onLikeTrack,
 }) {
-  const [showInlinePlayer, setShowInlinePlayer] = useState(false)
   const [shareOpen, setShareOpen] = useState(false)
 
   function handleShareTrack() {
@@ -119,10 +108,6 @@ function TrackDetails({
 
     setShareOpen(true)
   }
-
-  useEffect(() => {
-    setShowInlinePlayer(false)
-  }, [track?.id])
 
   const gemScorePercent = Math.max(0, Math.min((Number(track?.gemScore) || 0) * 10, 100))
 
@@ -158,7 +143,7 @@ function TrackDetails({
                 <button
                   type="button"
                   onClick={() => onToggleTrackPlayback(track.id)}
-                  className="tooltip-anchor track-details-play-button inline-flex items-center gap-2 rounded-2xl bg-white px-4 py-2 text-sm font-semibold text-zinc-900 transition hover:bg-zinc-200"
+                  className="tooltip-anchor track-details-play-button group inline-flex items-center gap-2 rounded-2xl bg-white px-4 py-2 text-sm font-semibold text-zinc-900 transition hover:bg-emerald-500 hover:text-white"
                   data-tooltip={isPlaying ? 'Pause this track' : 'Play this track'}
                 >
                   <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
@@ -199,9 +184,12 @@ function TrackDetails({
               <StatIcon kind="gem" />
               <p className="muted-label">Gem Score</p>
             </div>
-            <p className="mt-2 text-6xl font-semibold leading-none">{track.gemScore.toFixed(1)}</p>
+            <p className={`mt-2 text-6xl font-semibold leading-none ${getGemScoreTone(track.gemScore)}`}>{track.gemScore.toFixed(1)}</p>
             <div className="track-details-gem-meter mt-4 h-2 overflow-hidden rounded-full bg-zinc-200">
-              <span className="track-details-gem-fill block h-full rounded-full bg-zinc-900" style={{ width: `${gemScorePercent}%` }} />
+              <span
+                className="track-details-gem-fill block h-full rounded-full"
+                style={{ width: `${gemScorePercent}%`, backgroundColor: getGemScoreFill(track.gemScore) }}
+              />
             </div>
             {track.gemReason && <p className="track-details-gem-reason mt-3 text-sm text-zinc-600">{track.gemReason}</p>}
           </section>
@@ -214,20 +202,31 @@ function TrackDetails({
           <div className="mt-auto space-y-2">
             <button
               type="button"
-              onClick={() => onLikeTrack(track.id)}
-              className="tooltip-anchor track-details-save-btn w-full rounded-2xl bg-gradient-to-r from-zinc-950 via-zinc-900 to-zinc-800 px-4 py-3 text-lg font-semibold text-white transition hover:from-zinc-800 hover:to-zinc-700"
-              data-tooltip="Save this track to Liked"
+              onClick={() => {
+                if (!isLiked) {
+                  onLikeTrack(track.id)
+                }
+              }}
+              className={[
+                'tooltip-anchor track-details-save-btn group flex w-full items-center justify-center gap-2 rounded-2xl px-4 py-3 text-lg font-semibold transition',
+                isLiked
+                  ? 'border border-emerald-300 bg-emerald-50 text-emerald-700'
+                  : 'bg-gradient-to-r from-zinc-950 via-zinc-900 to-zinc-800 text-white hover:from-emerald-600 hover:to-emerald-500',
+              ].join(' ')}
+              data-tooltip={isLiked ? 'Saved to liked' : 'Save this track to Liked'}
             >
-              Save to Liked
+              {isLiked ? <BsCheckLg className="h-5 w-5" /> : <BsHeartFill className="h-5 w-5" />}
+              {isLiked ? 'Saved to Liked' : 'Save to Liked'}
             </button>
 
             <button
               type="button"
               onClick={handleShareTrack}
-              className="tooltip-anchor track-details-share-btn w-full rounded-2xl border border-zinc-300 bg-white px-4 py-3 text-lg font-semibold text-zinc-900 transition hover:border-zinc-900 hover:bg-zinc-900 hover:text-white"
+              className="tooltip-anchor track-details-share-btn hover-swap flex w-full items-center justify-center gap-2 rounded-2xl border border-zinc-300 bg-white px-4 py-3 text-lg font-semibold text-zinc-900 transition hover:border-sky-500 hover:bg-sky-500 hover:text-white"
               data-tooltip="Open share options for this track"
             >
-              Share
+              <span className="hover-swap-text">Share</span>
+              <BsShareFill className="hover-swap-icon h-5 w-5" />
             </button>
           </div>
         </div>

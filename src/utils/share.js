@@ -1,3 +1,5 @@
+// share.js - Utilities for generating social share payloads and URLs
+
 function encoded(value) {
   return encodeURIComponent(String(value || ''))
 }

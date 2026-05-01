@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { publicAsset } from '../utils/assetUrl'
+import { getGenreFilterOptions } from '../utils/filterTracks'
+import GenreDropdown from './GenreDropdown'
 
 const HINT_IDLE_DELAY_MS = 5000
 const HINT_REPEAT_MS = 12000
@@ -64,10 +66,16 @@ function getColorDistance(colorA, colorB) {
 function SwipeMode({
   track,
   nextTracks,
+  tracks = [],
+  filters = {},
+  onChangeFilters,
   isLoading = false,
+  isDarkMode = false,
+  isLiked = false,
   onSave,
   onSkip,
   onGem,
+  onThemeChange,
 }) {
   const cardRef = useRef(null)
   const dragSessionRef = useRef({ pointerId: null, startX: 0, startY: 0 })
@@ -285,6 +293,10 @@ function SwipeMode({
   }, [track?.artworkUrl])
 
   useEffect(() => {
+    onThemeChange?.(dynamicTheme)
+  }, [dynamicTheme, onThemeChange])
+
+  useEffect(() => {
     if (!isDragging) {
       return undefined
     }
@@ -404,8 +416,8 @@ function SwipeMode({
   const rotate = Math.max(Math.min(transformX / 18, 16), -16)
   const themedCardBackground = dynamicTheme?.cardBackground
   const themedCardBorderColor = dynamicTheme?.borderColor || 'rgba(228, 228, 231, 1)'
-  const themedTextColor = dynamicTheme?.textColor || 'rgb(24, 24, 27)'
-  const themedMutedTextColor = dynamicTheme?.mutedTextColor || 'rgb(113, 113, 122)'
+  const themedTextColor = dynamicTheme?.textColor || (isDarkMode ? 'rgb(255, 255, 255)' : 'rgb(24, 24, 27)')
+  const themedMutedTextColor = dynamicTheme?.mutedTextColor || (isDarkMode ? 'rgb(212, 212, 216)' : 'rgb(113, 113, 122)')
   const articleStyle = dynamicTheme
     ? {
         background: dynamicTheme.articleBackground,
@@ -426,11 +438,17 @@ function SwipeMode({
         borderColor: themedCardBorderColor,
         color: themedTextColor,
       }
-    : {
-        background: 'rgb(255, 255, 255)',
-        borderColor: 'rgba(228, 228, 231, 1)',
-        color: 'rgb(24, 24, 27)',
-      }
+    : isDarkMode
+      ? {
+          background: 'rgba(24, 24, 27, 0.86)',
+          borderColor: 'rgba(255, 255, 255, 0.18)',
+          color: 'rgb(255, 255, 255)',
+        }
+      : {
+          background: 'rgb(255, 255, 255)',
+          borderColor: 'rgba(228, 228, 231, 1)',
+          color: 'rgb(24, 24, 27)',
+        }
   const mutedLabelStyle = dynamicTheme
     ? { color: toRgba(dynamicTheme.textColor, 0.72) }
     : undefined
@@ -441,9 +459,9 @@ function SwipeMode({
         color: dynamicTheme.textColor,
       }
     : {
-        borderColor: 'rgba(228, 228, 231, 1)',
-        background: 'rgba(255, 255, 255, 0.95)',
-        color: 'rgb(82, 82, 91)',
+        borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.24)' : 'rgba(228, 228, 231, 1)',
+        background: isDarkMode ? 'rgba(24, 24, 27, 0.9)' : 'rgba(255, 255, 255, 0.95)',
+        color: isDarkMode ? 'rgb(255, 255, 255)' : 'rgb(82, 82, 91)',
       }
   const actionButtonStyle = dynamicTheme
     ? {
@@ -451,9 +469,17 @@ function SwipeMode({
         background: toRgba(dynamicTheme.textColor, 0.12),
       }
     : {
-        borderColor: 'rgba(212, 212, 216, 1)',
-        background: 'rgb(255, 255, 255)',
+        borderColor: isDarkMode ? 'rgba(255, 255, 255, 0.28)' : 'rgba(212, 212, 216, 1)',
+        background: isDarkMode ? 'rgba(24, 24, 27, 0.92)' : 'rgb(255, 255, 255)',
+        color: isDarkMode ? 'rgb(255, 255, 255)' : 'rgb(24, 24, 27)',
       }
+  const saveActionButtonStyle = isLiked
+    ? {
+        ...actionButtonStyle,
+        borderColor: 'rgba(16, 185, 129, 0.8)',
+        background: dynamicTheme ? toRgba('rgb(16, 185, 129)', 0.22) : 'rgb(236, 253, 245)',
+      }
+    : actionButtonStyle
   const tagChipStyle = dynamicTheme
     ? {
         background: dynamicTheme.chipBackground,
@@ -461,6 +487,15 @@ function SwipeMode({
         color: dynamicTheme.textColor,
       }
     : undefined
+  const genreOptions = useMemo(() => getGenreFilterOptions(tracks), [tracks])
+  const selectedStyle = filters.style && filters.style !== 'all' ? filters.style : filters.genre || 'all'
+  const skeletonBlockClass = isDarkMode
+    ? 'animate-pulse rounded-xl border border-white/15 bg-white/10'
+    : 'animate-pulse rounded-xl border border-zinc-200 bg-white'
+  const skeletonLineClass = isDarkMode
+    ? 'animate-pulse rounded bg-white/20'
+    : 'animate-pulse rounded bg-zinc-200'
+  const darkFallbackActive = isDarkMode && !dynamicTheme
 
   const cardStyle = {
     transform: `translate3d(${transformX}px, ${transformY}px, 0) rotate(${rotate}deg)`,
@@ -468,7 +503,7 @@ function SwipeMode({
     touchAction: 'none',
     userSelect: 'none',
     cursor: isDragging ? 'grabbing' : 'grab',
-    background: themedCardBackground || 'rgb(255, 255, 255)',
+    background: themedCardBackground || (isDarkMode ? 'rgb(9, 9, 11)' : 'rgb(255, 255, 255)'),
     boxShadow: '0 12px 28px rgba(0, 0, 0, 0.16)',
     borderColor:
       direction === 'left'
@@ -545,29 +580,37 @@ function SwipeMode({
     }, 240)
   }
 
+  function updateSwipeStyle(value) {
+    onChangeFilters?.((prev) => ({
+      ...prev,
+      genre: value,
+      style: value,
+    }))
+  }
+
   if (isLoading) {
     return (
-      <section className="panel flex h-full min-h-0 flex-col gap-3 overflow-hidden p-3 md:p-4">
+      <section className={`panel flex h-full min-h-0 flex-col gap-3 overflow-hidden p-3 md:p-4 ${isDarkMode ? 'bg-zinc-950 text-white' : 'bg-zinc-50 text-zinc-900'}`}>
         <header className="flex items-center justify-between">
           <div className="space-y-2">
-            <div className="h-7 w-40 animate-pulse rounded-md bg-zinc-200" />
-            <div className="h-3 w-28 animate-pulse rounded bg-zinc-200" />
+            <div className={`h-7 w-40 ${skeletonLineClass}`} />
+            <div className={`h-3 w-28 ${skeletonLineClass}`} />
           </div>
-          <div className="h-8 w-28 animate-pulse rounded-xl bg-zinc-200" />
+          <div className={`h-8 w-28 ${skeletonLineClass}`} />
         </header>
 
-        <article className="grid h-full min-h-0 grid-cols-1 gap-3 rounded-2xl border border-zinc-200 bg-zinc-50 p-2 md:grid-cols-[minmax(0,1fr)_300px] md:p-3">
+        <article className={`grid h-full min-h-0 grid-cols-1 gap-3 rounded-2xl border p-2 md:grid-cols-[minmax(0,1fr)_300px] md:p-3 ${isDarkMode ? 'border-white/15 bg-black/50' : 'border-zinc-200 bg-zinc-50'}`}>
           <div className="space-y-3">
-            <div className="mx-auto h-[56vh] max-h-[560px] w-full max-w-xl animate-pulse rounded-2xl border border-zinc-200 bg-white" />
-            <div className="mx-auto h-10 w-44 animate-pulse rounded-full bg-zinc-200" />
+            <div className={`mx-auto h-[56vh] max-h-[560px] w-full max-w-xl ${skeletonBlockClass}`} />
+            <div className={`mx-auto h-10 w-44 rounded-full ${skeletonLineClass}`} />
           </div>
           <div className="space-y-2">
-            <div className="h-16 animate-pulse rounded-xl border border-zinc-200 bg-white" />
-            <div className="h-16 animate-pulse rounded-xl border border-zinc-200 bg-white" />
-            <div className="h-20 animate-pulse rounded-xl border border-zinc-200 bg-white" />
-            <div className="h-24 animate-pulse rounded-xl border border-zinc-200 bg-white" />
-            <div className="h-16 animate-pulse rounded-xl border border-zinc-200 bg-white" />
-            <div className="h-20 animate-pulse rounded-xl border border-zinc-200 bg-white" />
+            <div className={`h-16 ${skeletonBlockClass}`} />
+            <div className={`h-16 ${skeletonBlockClass}`} />
+            <div className={`h-20 ${skeletonBlockClass}`} />
+            <div className={`h-24 ${skeletonBlockClass}`} />
+            <div className={`h-16 ${skeletonBlockClass}`} />
+            <div className={`h-20 ${skeletonBlockClass}`} />
           </div>
         </article>
       </section>
@@ -576,10 +619,10 @@ function SwipeMode({
 
   if (!track) {
     return (
-      <section className="panel grid h-full min-h-0 place-items-center p-8">
+      <section className={`panel grid h-full min-h-0 place-items-center p-8 ${isDarkMode ? 'bg-zinc-950 text-white' : 'bg-white text-zinc-900'}`}>
         <div className="space-y-2 text-center">
           <p className="text-2xl font-semibold">No tracks in queue</p>
-          <p className="text-zinc-600">Adjust filters or search to refill swipe mode.</p>
+          <p className={isDarkMode ? 'text-zinc-300' : 'text-zinc-600'}>Adjust filters or search to refill swipe mode.</p>
         </div>
       </section>
     )
@@ -587,17 +630,44 @@ function SwipeMode({
 
   return (
     <section
-      className="panel flex h-full min-h-0 flex-col gap-3 overflow-hidden p-3 md:p-4"
+      className={[
+        'panel flex h-full min-h-0 flex-col gap-3 overflow-hidden p-3 md:p-4',
+        darkFallbackActive ? 'border-white/15 bg-zinc-950 text-white' : '',
+      ].join(' ')}
       style={sectionStyle}
     >
-      <header className="flex flex-wrap items-center gap-2">
+      <header className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 className="text-xl font-semibold tracking-tight md:text-2xl" style={{ color: themedTextColor }}>Swipe Mode</h2>
         </div>
+
+        {genreOptions.length > 0 && (
+          <GenreDropdown
+            value={selectedStyle}
+            options={genreOptions}
+            totalCount={tracks.length}
+            onChange={updateSwipeStyle}
+            align="right"
+            className="min-w-52"
+            style={dynamicTheme ? {
+              '--genre-picker-bg': dynamicTheme.mutedBackground,
+              '--genre-picker-border': dynamicTheme.borderColor,
+              '--genre-picker-text': dynamicTheme.textColor,
+              '--genre-picker-muted': toRgba(dynamicTheme.textColor, 0.64),
+              '--genre-picker-hover': toRgba(dynamicTheme.textColor, 0.12),
+              '--genre-picker-active-bg': toRgba(dynamicTheme.accentColor, 0.24),
+              '--genre-picker-active-border': dynamicTheme.borderColor,
+              '--genre-picker-active-text': dynamicTheme.textColor,
+            } : undefined}
+          />
+        )}
       </header>
 
       <article
-        className="mx-auto grid h-full min-h-0 w-full max-w-6xl grid-cols-1 gap-3 rounded-2xl border border-zinc-200 bg-zinc-50 p-2 md:grid-cols-[minmax(0,1fr)_300px] md:p-3"
+        className={[
+          'mx-auto grid h-full min-h-0 w-full max-w-6xl grid-cols-1 gap-3 rounded-2xl border p-2 md:grid-cols-[minmax(0,1fr)_300px] md:p-3',
+          darkFallbackActive ? 'border-white/15 bg-black/50' : 'border-zinc-200 bg-zinc-50',
+        ].join(' ')}
         style={articleStyle}
       >
         <div className="flex min-h-0 flex-col justify-start gap-2 pr-1">
@@ -641,7 +711,7 @@ function SwipeMode({
                 />
               </div>
 
-              <div className={isHintActive && !isDragging && !queuedAction ? 'swipe-card-hint' : ''}>
+              <div className={`relative z-20 ${isHintActive && !isDragging && !queuedAction ? 'swipe-card-hint' : ''}`}>
                 <div
                   ref={cardRef}
                   className="relative overflow-hidden rounded-2xl border-2"
@@ -703,7 +773,7 @@ function SwipeMode({
 
             <p className="text-center text-[11px]" style={{ color: themedMutedTextColor }}>Swipe left for X, right for heart, down for diamond</p>
 
-            <div className="flex items-center justify-center gap-2.5 pt-0.5">
+            <div className="relative z-0 flex items-center justify-center gap-2.5 pt-0.5">
               <button
                 type="button"
                 onClick={() => handleButtonAction('skip')}
@@ -718,9 +788,9 @@ function SwipeMode({
                 type="button"
                 onClick={() => handleButtonAction('save')}
                 className="tooltip-anchor grid h-10 w-10 place-items-center rounded-full border text-lg font-semibold transition hover:opacity-85 md:h-11 md:w-11"
-                style={actionButtonStyle}
+                style={saveActionButtonStyle}
                 aria-label="Save track"
-                data-tooltip="Save track"
+                data-tooltip={isLiked ? 'Saved to liked' : 'Save track'}
               >
                 <img src={SAVE_ICON_SRC} alt="" className="h-6 w-6" draggable={false} />
               </button>

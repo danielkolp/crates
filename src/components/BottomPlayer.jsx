@@ -25,8 +25,26 @@ function loadYouTubeIframeApi() {
       resolve(window.YT)
     }
 
+    const waitForExistingScript = () => {
+      const pollStartedAt = performance.now()
+      const pollTimer = window.setInterval(() => {
+        if (window.YT?.Player) {
+          window.clearInterval(pollTimer)
+          resolve(window.YT)
+          return
+        }
+
+        if (performance.now() - pollStartedAt > 10000) {
+          window.clearInterval(pollTimer)
+          youtubeIframeApiPromise = null
+          reject(new Error('Timed out loading YouTube IFrame API script'))
+        }
+      }, 100)
+    }
+
     const existingScript = document.getElementById(YOUTUBE_IFRAME_SCRIPT_ID)
     if (existingScript) {
+      waitForExistingScript()
       return
     }
 
@@ -116,6 +134,7 @@ function BottomPlayer({
   volume,
   onTogglePlay,
   canSwipeActions,
+  isSwipeTrackLiked = false,
   onSwipeSkip,
   onSwipeSave,
   onSwipeGem,
@@ -212,8 +231,8 @@ function BottomPlayer({
         }
 
         playerRef.current = new YT.Player(audioHostRef.current, {
-          height: '0',
-          width: '0',
+          height: '200',
+          width: '200',
           videoId: currentTrack.youtubeVideoId,
           playerVars: {
             autoplay: 0,
@@ -233,6 +252,9 @@ function BottomPlayer({
               loadedVideoIdRef.current = currentTrack.youtubeVideoId
               try {
                 playerRef.current?.setVolume(volume)
+                if (isPlayingRef.current) {
+                  playerRef.current?.playVideo()
+                }
               } catch {
                 // Ignore occasional transient YouTube API errors.
               }
@@ -426,9 +448,7 @@ function BottomPlayer({
   const displayProgress = isScrubbing && scrubPercent !== null ? scrubPercent : progress
   const displayVolume = clampPercent(volume)
   const elapsedSeconds = (displayProgress / 100) * totalSeconds
-  const sliderThumbClass = isDarkMode
-    ? '[&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-black [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:shadow-none [&::-webkit-slider-thumb]:transition [&::-webkit-slider-thumb]:hover:scale-110 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-black [&::-moz-range-thumb]:bg-white [&::-moz-range-thumb]:transition [&::-moz-range-thumb]:hover:scale-110'
-    : '[&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-zinc-900 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:shadow [&::-webkit-slider-thumb]:transition [&::-webkit-slider-thumb]:hover:scale-110 [&::-moz-range-thumb]:h-3.5 [&::-moz-range-thumb]:w-3.5 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-zinc-900 [&::-moz-range-thumb]:bg-white [&::-moz-range-thumb]:shadow [&::-moz-range-thumb]:transition [&::-moz-range-thumb]:hover:scale-110'
+  const rangeThemeClass = isDarkMode ? 'range-control-dark' : ''
 
   function applySeekPercent(nextPercent) {
     const clampedPercent = clampPercent(nextPercent)
@@ -474,7 +494,7 @@ function BottomPlayer({
       ref={footerRef}
       className={[
         'fixed bottom-0 left-0 right-0 z-30 border-t backdrop-blur-md',
-        isDarkMode ? 'border-white bg-black text-white' : 'border-zinc-300 bg-zinc-50/95 text-zinc-900',
+        isDarkMode ? 'border-white/60 bg-black text-white' : 'border-zinc-300 bg-zinc-50/95 text-zinc-900',
       ].join(' ')}
     >
       <div className="mx-auto grid max-w-[1800px] grid-cols-1 gap-3 px-4 py-3 md:grid-cols-[minmax(0,260px)_1fr_auto] md:items-center md:gap-6 md:px-6">
@@ -482,7 +502,7 @@ function BottomPlayer({
           <img
             src={currentTrack.artworkUrl}
             alt={currentTrack.title}
-            className={`h-14 w-14 rounded-xl border object-cover ${isDarkMode ? 'border-white' : 'border-zinc-300'}`}
+            className={`h-14 w-14 rounded-xl border object-cover ${isDarkMode ? 'border-white/60' : 'border-zinc-300'}`}
             loading="lazy"
           />
           <div className="min-w-0">
@@ -502,7 +522,7 @@ function BottomPlayer({
                 className={[
                   'tooltip-anchor grid h-9 w-9 place-items-center rounded-full border transition disabled:cursor-not-allowed disabled:opacity-50',
                   isDarkMode
-                    ? 'border-white bg-black text-white hover:bg-zinc-900'
+                    ? 'border-white/60 bg-black text-white hover:bg-zinc-900'
                     : 'border-zinc-300 bg-white hover:border-zinc-900 hover:bg-zinc-900',
                 ].join(' ')}
                 aria-label="Skip track"
@@ -517,7 +537,7 @@ function BottomPlayer({
               className={[
                 'tooltip-anchor grid h-9 w-9 place-items-center rounded-full border transition',
                 isDarkMode
-                  ? 'border-white bg-black text-white hover:bg-zinc-900'
+                  ? 'border-white/60 bg-black text-white hover:bg-zinc-900'
                   : 'border-zinc-900 bg-zinc-900 text-white hover:bg-zinc-700',
               ].join(' ')}
               aria-label={isPlaying ? 'Pause' : 'Play'}
@@ -532,12 +552,14 @@ function BottomPlayer({
                 disabled={!canSwipeActions}
                 className={[
                   'tooltip-anchor grid h-9 w-9 place-items-center rounded-full border transition disabled:cursor-not-allowed disabled:opacity-50',
-                  isDarkMode
-                    ? 'border-white bg-black text-white hover:border-emerald-500 hover:bg-emerald-500'
-                    : 'border-zinc-300 bg-white hover:border-emerald-500 hover:bg-emerald-500',
+                  isSwipeTrackLiked
+                    ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
+                    : isDarkMode
+                      ? 'border-white/60 bg-black text-white hover:border-emerald-500 hover:bg-emerald-500'
+                      : 'border-zinc-300 bg-white hover:border-emerald-500 hover:bg-emerald-500',
                 ].join(' ')}
-                aria-label="Save track"
-                data-tooltip="Save to liked tracks (same as swipe right)"
+                aria-label={isSwipeTrackLiked ? 'Saved to liked' : 'Save track'}
+                data-tooltip={isSwipeTrackLiked ? 'Saved to liked' : 'Save to liked tracks (same as swipe right)'}
               >
                 <img src={SAVE_ICON_SRC} alt="" className="h-5 w-5" draggable={false} />
               </button>
@@ -550,7 +572,7 @@ function BottomPlayer({
                 className={[
                   'tooltip-anchor grid h-9 w-9 place-items-center rounded-full border transition disabled:cursor-not-allowed disabled:opacity-50',
                   isDarkMode
-                    ? 'border-white bg-black text-white hover:border-amber-500 hover:bg-amber-400'
+                    ? 'border-white/60 bg-black text-white hover:border-amber-500 hover:bg-amber-400'
                     : 'border-zinc-300 bg-white hover:border-amber-500 hover:bg-amber-400',
                 ].join(' ')}
                 aria-label="Gem track"
@@ -564,17 +586,9 @@ function BottomPlayer({
           <div className="flex items-center gap-2">
             <span className={`mono w-10 text-right text-xs ${isDarkMode ? 'text-zinc-300' : 'text-zinc-500'}`}>{formatTime(elapsedSeconds)}</span>
             <div
-              className={[
-                'tooltip-anchor relative h-2 flex-1 rounded-full border',
-                isDarkMode ? 'border-white bg-black' : 'border-zinc-300 bg-white',
-              ].join(' ')}
+              className="tooltip-anchor flex flex-1 items-center"
               data-tooltip="Drag to scrub through the current track"
             >
-              <span
-                className={`absolute inset-y-0 left-0 rounded-full ${isDarkMode ? 'bg-white' : 'bg-zinc-900'}`}
-                style={{ width: `${displayProgress}%` }}
-              />
-
               <input
                 type="range"
                 min="0"
@@ -590,25 +604,23 @@ function BottomPlayer({
 
                   applySeekPercent(event.target.value)
                 }}
-                className={`absolute inset-0 h-2 w-full cursor-pointer appearance-none bg-transparent [&::-webkit-slider-runnable-track]:h-2 [&::-webkit-slider-runnable-track]:bg-transparent [&::-moz-range-track]:h-2 [&::-moz-range-track]:bg-transparent ${sliderThumbClass}`}
+                className={`range-control ${rangeThemeClass}`}
+                style={{ '--range-fill': `${displayProgress}%` }}
                 aria-label="Seek playback"
               />
             </div>
             <span className={`mono w-10 text-xs ${isDarkMode ? 'text-zinc-300' : 'text-zinc-500'}`}>{currentTrack.duration}</span>
             <label className={`tooltip-anchor ml-1 flex items-center gap-2 ${isDarkMode ? 'text-white' : 'text-zinc-600'}`} data-tooltip="Adjust playback volume">
               <VolumeIcon volume={volume} />
-              <div className={`relative h-1.5 w-24 rounded-full border ${isDarkMode ? 'border-white bg-black' : 'border-zinc-300 bg-white'}`}>
-                <span
-                  className={`absolute inset-y-0 left-0 rounded-full ${isDarkMode ? 'bg-white' : 'bg-zinc-900'}`}
-                  style={{ width: `${displayVolume}%` }}
-                />
+              <div className="flex w-24 items-center">
                 <input
                   type="range"
                   min="0"
                   max="100"
                   value={volume}
                   onChange={(event) => onVolumeChange(Number(event.target.value))}
-                  className={`absolute inset-0 h-1.5 w-full cursor-pointer appearance-none bg-transparent [&::-webkit-slider-runnable-track]:h-1.5 [&::-webkit-slider-runnable-track]:rounded-full [&::-webkit-slider-runnable-track]:bg-transparent [&::-moz-range-track]:h-1.5 [&::-moz-range-track]:rounded-full [&::-moz-range-track]:bg-transparent ${sliderThumbClass}`}
+                  className={`range-control range-control-compact ${rangeThemeClass}`}
+                  style={{ '--range-fill': `${displayVolume}%` }}
                   aria-label="Volume"
                 />
               </div>
@@ -620,7 +632,7 @@ function BottomPlayer({
           <span
             className={[
               'tooltip-anchor mono rounded-lg border px-2 py-1 text-xs',
-              isDarkMode ? 'border-white bg-black text-white' : 'border-zinc-300 bg-white text-zinc-600',
+              isDarkMode ? 'border-white/60 bg-black text-white' : 'border-zinc-300 bg-white text-zinc-600',
             ].join(' ')}
             data-tooltip="Tracks remaining in the current queue"
           >
@@ -629,7 +641,7 @@ function BottomPlayer({
         </div>
 
         <div className="md:col-span-3">
-          <div className="h-0 w-0 overflow-hidden" aria-hidden="true">
+          <div className="pointer-events-none absolute -left-[9999px] top-0 h-[200px] w-[200px] overflow-hidden opacity-0" aria-hidden="true">
             <div ref={audioHostRef} />
           </div>
 

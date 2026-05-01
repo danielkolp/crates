@@ -9,6 +9,7 @@
     "predeploy": "npm run build",
     "deploy": "gh-pages -d dist",
     "lint": "eslint .",
+    "test:scoring": "node scripts/scoring-regression.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

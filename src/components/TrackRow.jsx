@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { BsCheckLg, BsHeartFill, BsPauseFill, BsPlayFill, BsShareFill } from 'react-icons/bs'
 import ShareModal from './ShareModal'
 import { getTrackSharePayload } from '../utils/share'
 
@@ -28,12 +29,27 @@ function parseDurationSeconds(track) {
   return 0
 }
 
+function getGemScoreClass(score) {
+  const value = Number(score) || 0
+
+  if (value >= 7.5) {
+    return 'border-emerald-300 bg-emerald-50 text-emerald-700'
+  }
+
+  if (value >= 5) {
+    return 'border-amber-300 bg-amber-50 text-amber-700'
+  }
+
+  return 'border-red-300 bg-red-50 text-red-700'
+}
+
 function TrackRow({
   rank,
   track,
   isSelected,
   isPlaying,
   playbackProgress,
+  isLiked = false,
   onLikeTrack,
   onSelect,
   onPlay,
@@ -52,13 +68,24 @@ function TrackRow({
     setShareOpen(true)
   }
 
+  function handleRowKeyDown(event) {
+    if (event.key !== 'Enter' && event.key !== ' ') {
+      return
+    }
+
+    event.preventDefault()
+    onSelect()
+  }
+
   return (
     <>
-      <button
-        type="button"
+      <div
+        role="button"
+        tabIndex={0}
         onClick={onSelect}
+        onKeyDown={handleRowKeyDown}
         className={[
-          'tooltip-anchor grid w-full grid-cols-[40px_minmax(0,2.6fr)_minmax(0,1.1fr)_0.8fr_0.8fr_0.8fr_0.8fr_160px] gap-2 px-4 py-3 text-left transition',
+          'tooltip-anchor track-table-grid grid w-full cursor-pointer px-3 py-3 text-left transition',
           isSelected ? 'bg-zinc-100' : 'hover:bg-zinc-50',
         ].join(' ')}
       >
@@ -78,11 +105,11 @@ function TrackRow({
             event.stopPropagation()
             onPlay()
           }}
-          className="tooltip-anchor grid h-8 w-8 shrink-0 place-items-center rounded-full border border-zinc-300 text-xs font-semibold transition hover:border-zinc-900 hover:bg-zinc-900 hover:text-white"
+          className="tooltip-anchor group grid h-8 w-8 shrink-0 place-items-center rounded-full border border-zinc-300 text-xs font-semibold text-zinc-700 transition hover:border-emerald-500 hover:bg-emerald-500 hover:text-white"
           aria-label={isPlaying ? `Pause ${track.title}` : `Play ${track.title}`}
           data-tooltip={isPlaying ? 'Pause track' : 'Play track'}
         >
-          {isPlaying ? '||' : '>'}
+          {isPlaying ? <BsPauseFill className="h-4 w-4" /> : <BsPlayFill className="h-4 w-4 transition-transform group-hover:scale-110" />}
         </button>
 
         <div className="min-w-0">
@@ -122,7 +149,7 @@ function TrackRow({
       <span className="pt-3 text-sm text-zinc-700">{compactNumber(track.likes)}</span>
       <span className="pt-3 text-sm text-zinc-700">{compactNumber(track.comments)}</span>
       <span className="pt-2.5">
-        <span className="inline-flex min-w-12 justify-center rounded-full border border-zinc-300 px-2 py-1 text-sm font-semibold">
+        <span className={`inline-flex min-w-12 justify-center rounded-full border px-2 py-1 text-sm font-semibold ${getGemScoreClass(track.gemScore)}`}>
           {track.gemScore.toFixed(1)}
         </span>
         {Number.isFinite(Number(track.qualityScore)) && (
@@ -137,25 +164,35 @@ function TrackRow({
             type="button"
             onClick={(event) => {
               event.stopPropagation()
+              if (isLiked) {
+                return
+              }
               onLikeTrack(track.id)
             }}
-            className="tooltip-anchor rounded-lg border border-zinc-300 bg-white px-2 py-1 text-[11px] font-semibold transition hover:border-zinc-900 hover:bg-zinc-900 hover:text-white"
-            data-tooltip="Save to liked tracks"
+            className={[
+              'tooltip-anchor inline-flex min-w-[104px] items-center justify-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-semibold transition',
+              isLiked
+                ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
+                : 'border-zinc-300 bg-white text-zinc-700 hover:border-emerald-500 hover:bg-emerald-500 hover:text-white',
+            ].join(' ')}
+            data-tooltip={isLiked ? 'Saved to liked' : 'Save to liked tracks'}
           >
-            Like
+            {isLiked ? <BsCheckLg className="h-3 w-3" /> : <BsHeartFill className="h-3 w-3" />}
+            <span>{isLiked ? 'Saved to liked' : 'Like'}</span>
           </button>
 
           <button
             type="button"
             onClick={handleShareTrack}
-            className="tooltip-anchor grid h-7 w-7 place-items-center rounded-full border border-zinc-300 bg-white text-[11px] font-semibold transition hover:border-zinc-900 hover:bg-zinc-900 hover:text-white"
+            className="tooltip-anchor hover-swap grid h-7 w-7 place-items-center rounded-full border border-zinc-300 bg-white text-[11px] font-semibold text-zinc-700 transition hover:border-sky-500 hover:bg-sky-500 hover:text-white"
             aria-label={`Share ${track.title}`}
             data-tooltip="Share track"
           >
-            S
+            <span className="hover-swap-text">S</span>
+            <BsShareFill className="hover-swap-icon h-3.5 w-3.5" />
           </button>
         </div>
-      </button>
+      </div>
 
       <ShareModal
         open={shareOpen}
