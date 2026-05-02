@@ -10,6 +10,7 @@ import CrateList from './components/CrateList'
 import EmptyState from './components/EmptyState'
 import SwipeMode from './components/SwipeMode'
 import TrackCollectionView from './components/TrackCollectionView'
+import ToastViewport from './components/ToastViewport'
 
 import {
   getStoredCrates,
@@ -66,6 +67,34 @@ const DEFAULT_SEARCH_STATUS = {
   source: 'youtube',
   usedFallback: false,
   message: 'Ready for live YouTube search.',
+}
+
+const TOAST_EXIT_MS = 220
+
+function slugifyPlaylistName(value) {
+  const slug = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+
+  return slug || 'playlist'
+}
+
+function buildPlaylistId(name, existingPlaylists) {
+  const baseId = `playlist-${slugifyPlaylistName(name)}`
+  const existingIds = new Set(existingPlaylists.map((playlist) => playlist.id))
+
+  if (!existingIds.has(baseId)) {
+    return baseId
+  }
+
+  let suffix = 2
+  while (existingIds.has(`${baseId}-${suffix}`)) {
+    suffix += 1
+  }
+
+  return `${baseId}-${suffix}`
 }
 
 function withLockedTrackFilters(filters) {
@@ -169,6 +198,7 @@ function App() {
   const [selectedTrackId, setSelectedTrackId] = useState(null)
   const [currentTrackId, setCurrentTrackId] = useState(null)
   const [isPlaying, setIsPlaying] = useState(false)
+  const [playbackCommand, setPlaybackCommand] = useState({ id: 0, trackId: null, shouldPlay: false })
   const [playerProgress, setPlayerProgress] = useState(0)
   const [volume, setVolume] = useState(72)
   const [playerReservedHeight, setPlayerReservedHeight] = useState(112)
@@ -179,8 +209,10 @@ function App() {
   const [swipedTrackIds, setSwipedTrackIds] = useState([])
   const [searchRefreshKey, setSearchRefreshKey] = useState(0)
   const [swipeTheme, setSwipeTheme] = useState(null)
+  const [toasts, setToasts] = useState([])
 
   const autoplayNextSwipeRef = useRef(false)
+  const toastTimersRef = useRef(new Map())
 
   const filteredTracks = allTracks
   const tracksById = trackCatalog
@@ -245,6 +277,11 @@ function App() {
     }
   }, [location.pathname, navigate])
 
+  useEffect(() => () => {
+    toastTimersRef.current.forEach((timerId) => window.clearTimeout(timerId))
+    toastTimersRef.current.clear()
+  }, [])
+
   useEffect(() => {
     window.getYouTubeGemScore = getYouTubeGemScore
     window.getYouTubeGemScoreDetails = getYouTubeGemScoreDetails
@@ -283,8 +320,11 @@ function App() {
 
   useEffect(() => {
     let isCancelled = false
-
-    setIsLoadingTracks(true)
+    const loadingTimer = window.setTimeout(() => {
+      if (!isCancelled) {
+        setIsLoadingTracks(true)
+      }
+    }, 0)
 
     const searchTimer = window.setTimeout(() => {
       async function runSearch() {
@@ -349,34 +389,44 @@ function App() {
 
     return () => {
       isCancelled = true
+      window.clearTimeout(loadingTimer)
       window.clearTimeout(searchTimer)
     }
   }, [filters, digDeeperActive, digDeeperTags, searchRefreshKey])
 
   useEffect(() => {
-    if (activeScreen !== 'swipe' || !swipeTrack) {
+    if (activeScreen !== 'swipe' || !swipeTrack || isLoadingTracks) {
       return undefined
     }
 
-    const shouldAutoplay = autoplayNextSwipeRef.current
-    autoplayNextSwipeRef.current = false
+    const syncTimer = window.setTimeout(() => {
+      const shouldAutoplay = autoplayNextSwipeRef.current
+      autoplayNextSwipeRef.current = false
 
-    setSelectedTrackId(swipeTrack.id)
+      setSelectedTrackId(swipeTrack.id)
 
-    if (currentTrackId === swipeTrack.id) {
-      if (shouldAutoplay) {
-        setIsPlaying(true)
+      if (currentTrackId === swipeTrack.id) {
+        if (shouldAutoplay) {
+          setIsPlaying(true)
+          requestPlaybackSync(swipeTrack.id, true)
+        }
+
+        return
       }
 
-      return undefined
+      setCurrentTrackId(swipeTrack.id)
+      setIsPlaying(shouldAutoplay)
+      setPlayerProgress(0)
+
+      if (shouldAutoplay) {
+        requestPlaybackSync(swipeTrack.id, true)
+      }
+    }, 0)
+
+    return () => {
+      window.clearTimeout(syncTimer)
     }
-
-    setCurrentTrackId(swipeTrack.id)
-    setIsPlaying(shouldAutoplay)
-    setPlayerProgress(0)
-
-    return undefined
-  }, [activeScreen, currentTrackId, swipeTrack])
+  }, [activeScreen, currentTrackId, isLoadingTracks, swipeTrack])
 
   function appendHistory(trackId, action) {
     if (!trackId) {
@@ -389,6 +439,76 @@ function App() {
     })
   }
 
+  function requestPlaybackSync(trackId, shouldPlay) {
+    setPlaybackCommand((prev) => ({
+      id: prev.id + 1,
+      trackId: trackId || null,
+      shouldPlay: Boolean(shouldPlay),
+    }))
+  }
+
+  function dismissToast(toastId) {
+    const timerId = toastTimersRef.current.get(toastId)
+
+    if (timerId) {
+      window.clearTimeout(timerId)
+      toastTimersRef.current.delete(toastId)
+    }
+
+    let shouldScheduleRemoval = false
+
+    setToasts((prev) =>
+      prev.map((toast) => {
+        if (toast.id !== toastId) {
+          return toast
+        }
+
+        if (!toast.exiting) {
+          shouldScheduleRemoval = true
+        }
+
+        return {
+          ...toast,
+          exiting: true,
+        }
+      }),
+    )
+
+    if (shouldScheduleRemoval) {
+      const removalTimerId = window.setTimeout(() => {
+        setToasts((prev) => prev.filter((toast) => toast.id !== toastId))
+        toastTimersRef.current.delete(toastId)
+      }, TOAST_EXIT_MS)
+
+      toastTimersRef.current.set(toastId, removalTimerId)
+    }
+  }
+
+  function pushToast({ tone = 'success', title, message }) {
+    const toastId = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`
+
+    setToasts((prev) => [
+      {
+        id: toastId,
+        tone,
+        title,
+        message,
+        exiting: false,
+      },
+      ...prev,
+    ].slice(0, 4))
+
+    const timerId = window.setTimeout(() => {
+      dismissToast(toastId)
+    }, tone === 'error' ? 5200 : 3600)
+
+    toastTimersRef.current.set(toastId, timerId)
+  }
+
+  function getTrackTitle(trackId) {
+    return tracksById[trackId]?.title || 'Track'
+  }
+
   function handleScreenChange(screenId) {
     const nextPath = SCREEN_TO_PATH[screenId] ?? '/search'
     navigate(nextPath)
@@ -399,39 +519,105 @@ function App() {
     appendHistory(trackId, 'selected')
   }
 
+  function syncSwipeQueueToTrack(trackId) {
+    if (!trackId) {
+      return
+    }
+
+    const catalogTrack = tracksById[trackId]
+    const queue = allTracks.some((track) => track.id === trackId)
+      ? allTracks
+      : catalogTrack
+        ? [catalogTrack, ...allTracks]
+        : allTracks
+
+    if (catalogTrack && !allTracks.some((track) => track.id === trackId)) {
+      setAllTracks((prev) => (prev.some((track) => track.id === trackId) ? prev : [catalogTrack, ...prev]))
+    }
+
+    const targetIndex = queue.findIndex((track) => track.id === trackId)
+    setSwipedTrackIds(targetIndex > 0 ? queue.slice(0, targetIndex).map((track) => track.id) : [])
+  }
+
   function handlePlayTrack(trackId) {
+    if (!trackId) {
+      return
+    }
+
+    syncSwipeQueueToTrack(trackId)
+    setIsPlaying(false)
+    setPlayerProgress(0)
     setCurrentTrackId(trackId)
     setSelectedTrackId(trackId)
     setIsPlaying(true)
-    setPlayerProgress(0)
+    requestPlaybackSync(trackId, true)
     appendHistory(trackId, 'played')
   }
 
-  function handleToggleTrackPlayback(trackId) {
+  function handleToggleTrackPlayback(trackId, nextPlaying = null) {
     if (!trackId) {
       return
     }
 
     if (currentTrackId === trackId) {
+      const shouldPlay = typeof nextPlaying === 'boolean' ? nextPlaying : !isPlaying
+
       setSelectedTrackId(trackId)
-      setIsPlaying((prev) => !prev)
+      setIsPlaying(shouldPlay)
+      requestPlaybackSync(trackId, shouldPlay)
       return
     }
 
     handlePlayTrack(trackId)
   }
 
-  function handleTogglePlayback() {
-    if (!currentTrackId && filteredTracks.length > 0) {
-      handlePlayTrack(filteredTracks[0].id)
+  function handleTogglePlayback(nextPlaying = null) {
+    const shouldPlay = typeof nextPlaying === 'boolean' ? nextPlaying : !isPlaying
+
+    if (activeScreen === 'swipe' && swipeTrack?.id && currentTrackId !== swipeTrack.id) {
+      handlePlayTrack(swipeTrack.id)
       return
     }
 
-    setIsPlaying((prev) => !prev)
+    if (!currentTrackId || !tracksById[currentTrackId]) {
+      const fallbackTrack = swipeTrack || filteredTracks[0] || allTracks[0]
+
+      if (fallbackTrack?.id) {
+        handlePlayTrack(fallbackTrack.id)
+      }
+
+      return
+    }
+
+    setIsPlaying(shouldPlay)
+    requestPlaybackSync(currentTrackId, shouldPlay)
+  }
+
+  function handleSwipeTogglePlayback(nextPlaying = null) {
+    if (swipeTrack?.id) {
+      handleToggleTrackPlayback(swipeTrack.id, nextPlaying)
+      return
+    }
+
+    handleTogglePlayback(nextPlaying)
   }
 
   async function handleLikeTrack(trackId) {
     if (!trackId) {
+      pushToast({
+        tone: 'error',
+        title: 'Could not save track',
+        message: 'No track was selected.',
+      })
+      return
+    }
+
+    if (likedTrackIds.includes(trackId)) {
+      pushToast({
+        tone: 'info',
+        title: 'Already in Liked',
+        message: getTrackTitle(trackId),
+      })
       return
     }
 
@@ -439,8 +625,17 @@ function App() {
 
     try {
       await addTrackToCrateApi(trackId, 'liked-tracks')
+      pushToast({
+        title: 'Saved to Liked',
+        message: getTrackTitle(trackId),
+      })
     } catch (error) {
       console.error('[CrateDigger][app] failed to add liked track', error)
+      pushToast({
+        tone: 'error',
+        title: 'Liked locally, sync failed',
+        message: 'The track was saved in this browser but the remote action failed.',
+      })
     }
   }
 
@@ -470,10 +665,127 @@ function App() {
           : crate,
       ),
     )
+
+    const crate = crates.find((item) => item.id === crateId)
+    pushToast({
+      title: 'Removed from playlist',
+      message: crate ? `${getTrackTitle(trackId)} removed from ${crate.name}.` : getTrackTitle(trackId),
+    })
+  }
+
+  function handleCreatePlaylist({ name, description = 'Custom playlist', trackId } = {}) {
+    const playlistName = String(name || '').trim()
+    if (!playlistName) {
+      pushToast({
+        tone: 'error',
+        title: 'Playlist needs a name',
+      })
+      return ''
+    }
+
+    const playlistId = buildPlaylistId(playlistName, crates)
+    const initialTrackIds = trackId ? [trackId] : []
+
+    setCrates((prev) => [
+      {
+        id: playlistId,
+        name: playlistName,
+        description,
+        trackIds: initialTrackIds,
+      },
+      ...prev,
+    ])
+
+    pushToast({
+      title: 'Playlist created',
+      message: trackId
+        ? `${getTrackTitle(trackId)} added to ${playlistName}.`
+        : playlistName,
+    })
+
+    return playlistId
+  }
+
+  function handleAddTrackToPlaylist(trackId, playlistId) {
+    if (!trackId || !playlistId) {
+      pushToast({
+        tone: 'error',
+        title: 'Could not add to playlist',
+        message: 'Choose a track and playlist first.',
+      })
+      return
+    }
+
+    const playlist = crates.find((crate) => crate.id === playlistId)
+
+    if (!playlist) {
+      pushToast({
+        tone: 'error',
+        title: 'Playlist not found',
+        message: 'Create a playlist first, then try again.',
+      })
+      return
+    }
+
+    if (playlist.trackIds.includes(trackId)) {
+      pushToast({
+        tone: 'info',
+        title: 'Already in playlist',
+        message: `${getTrackTitle(trackId)} is already in ${playlist.name}.`,
+      })
+      return
+    }
+
+    setCrates((prev) =>
+      prev.map((crate) =>
+        crate.id === playlistId
+          ? {
+              ...crate,
+              trackIds: crate.trackIds.includes(trackId) ? crate.trackIds : [trackId, ...crate.trackIds],
+            }
+          : crate,
+      ),
+    )
+
+    pushToast({
+      title: 'Added to playlist',
+      message: `${getTrackTitle(trackId)} added to ${playlist.name}.`,
+    })
+  }
+
+  function handleDeletePlaylist(playlistId) {
+    const playlist = crates.find((crate) => crate.id === playlistId)
+
+    if (!playlist) {
+      pushToast({
+        tone: 'error',
+        title: 'Playlist not found',
+      })
+      return
+    }
+
+    setCrates((prev) => prev.filter((crate) => crate.id !== playlistId))
+    pushToast({
+      title: 'Playlist deleted',
+      message: playlist.name,
+    })
   }
 
   function handleRemoveFromLiked(trackId) {
+    if (!likedTrackIds.includes(trackId)) {
+      pushToast({
+        tone: 'error',
+        title: 'Track was not in Liked',
+        message: getTrackTitle(trackId),
+      })
+      return
+    }
+
     setLikedTrackIds((prev) => prev.filter((id) => id !== trackId))
+    pushToast({
+      title: 'Removed from Liked',
+      message: getTrackTitle(trackId),
+    })
   }
 
   function handleRemoveFromGems(trackId) {
@@ -496,18 +808,20 @@ function App() {
   }
 
   function handleSwipeAdvance({ forcePlaybackAdvance = false } = {}) {
-    if (!swipeTrack) {
+    const currentSwipeTrack = swipeTrack
+
+    if (!currentSwipeTrack) {
       return
     }
 
-    autoplayNextSwipeRef.current = true
-
     const nextSwiped = new Set(swipedTrackIds)
-    nextSwiped.add(swipeTrack.id)
+    nextSwiped.add(currentSwipeTrack.id)
+    const nextTrack = swipeQueue.find((track) => !nextSwiped.has(track.id))
 
     const hasConsumedSwipeBatch = swipeQueue.length > 0 && nextSwiped.size >= swipeQueue.length
 
     if (hasConsumedSwipeBatch) {
+      autoplayNextSwipeRef.current = true
       setSwipedTrackIds([])
       setIsLoadingTracks(true)
       setSearchRefreshKey((prev) => prev + 1)
@@ -516,26 +830,24 @@ function App() {
 
     setSwipedTrackIds(Array.from(nextSwiped))
 
-    if (forcePlaybackAdvance) {
-      const nextTrack = swipeQueue.find((track) => !nextSwiped.has(track.id))
-
-      if (nextTrack) {
-        setCurrentTrackId(nextTrack.id)
-        setSelectedTrackId(nextTrack.id)
-        setIsPlaying(true)
-        setPlayerProgress(0)
-      }
+    if (nextTrack && (activeScreen === 'swipe' || forcePlaybackAdvance)) {
+      setPlayerProgress(0)
+      setCurrentTrackId(nextTrack.id)
+      setSelectedTrackId(nextTrack.id)
+      setIsPlaying(true)
+      requestPlaybackSync(nextTrack.id, true)
     }
   }
 
-  async function handleSwipeSave() {
+  function handleSwipeSave() {
     if (!swipeTrack) {
       return
     }
 
-    await handleLikeTrack(swipeTrack.id)
-    appendHistory(swipeTrack.id, 'saved')
+    const trackId = swipeTrack.id
+    appendHistory(trackId, 'saved')
     handleSwipeAdvance({ forcePlaybackAdvance: activeScreen !== 'swipe' })
+    void handleLikeTrack(trackId)
   }
 
   function handleSwipeSkip() {
@@ -543,18 +855,20 @@ function App() {
       return
     }
 
-    appendHistory(swipeTrack.id, 'skipped')
+    const trackId = swipeTrack.id
+    appendHistory(trackId, 'skipped')
     handleSwipeAdvance({ forcePlaybackAdvance: activeScreen !== 'swipe' })
   }
 
-  async function handleSwipeGem() {
+  function handleSwipeGem() {
     if (!swipeTrack) {
       return
     }
 
-    await handleGemTrack(swipeTrack.id)
-    appendHistory(swipeTrack.id, 'gem')
+    const trackId = swipeTrack.id
+    appendHistory(trackId, 'gem')
     handleSwipeAdvance({ forcePlaybackAdvance: activeScreen !== 'swipe' })
+    void handleGemTrack(trackId)
   }
 
   function handleBottomSwipeSkip() {
@@ -668,12 +982,17 @@ function App() {
                     tracks={allTracks}
                     filters={filters}
                     onChangeFilters={setFilters}
+                    playlists={crates}
                     isLoading={isLoadingTracks}
                     isDarkMode={shouldApplyChromeDarkMode}
+                    isPlaying={Boolean(swipeTrack && isPlaying && currentTrackId === swipeTrack.id)}
                     isLiked={Boolean(swipeTrack && likedTrackIdSet.has(swipeTrack.id))}
                     onSave={handleSwipeSave}
                     onSkip={handleSwipeSkip}
                     onGem={handleSwipeGem}
+                    onAddToPlaylist={handleAddTrackToPlaylist}
+                    onCreatePlaylist={handleCreatePlaylist}
+                    onTogglePlayback={handleSwipeTogglePlayback}
                     onThemeChange={setSwipeTheme}
                   />
                 }
@@ -688,6 +1007,8 @@ function App() {
                     selectedTrackId={selectedTrackId}
                     onSelectTrack={handleSelectTrack}
                     onPlayTrack={handlePlayTrack}
+                    onCreatePlaylist={handleCreatePlaylist}
+                    onDeletePlaylist={handleDeletePlaylist}
                     onRemoveFromCrate={handleRemoveFromCrate}
                   />
                 }
@@ -735,7 +1056,7 @@ function App() {
                 element={
                   <section className="panel space-y-3 p-4">
                     <header className="flex items-center justify-between border-b border-zinc-200 pb-3">
-                      <h2 className="text-lg font-semibold">Your Dig History</h2>
+                      <h2 className="text-lg font-semibold">Your Discovery History</h2>
                       <span className="mono text-xs text-zinc-500">
                         {historyItems.length} tracks
                       </span>
@@ -744,7 +1065,7 @@ function App() {
                     {historyItems.length === 0 && (
                       <EmptyState
                         title="History is empty"
-                        description="Select or play a track to start building your dig timeline."
+                        description="Select or play a track to start building your discovery timeline."
                       />
                     )}
 
@@ -753,14 +1074,9 @@ function App() {
                         {historyItems.map((item, index) => (
                           <div
                             key={item.id}
-                            className="tooltip-anchor flex w-full items-center justify-between rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-3 text-left transition hover:border-zinc-400 hover:bg-white"
-                            data-tooltip="Select this history track"
+                            className="flex w-full items-center justify-between rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-3 text-left"
                           >
-                            <button
-                              type="button"
-                              onClick={() => handleSelectTrack(item.track.id)}
-                              className="flex min-w-0 flex-1 items-center gap-3 text-left"
-                            >
+                            <div className="flex min-w-0 flex-1 items-center gap-3">
                               <span className="mono hidden text-xs text-zinc-500 sm:inline">
                                 {String(index + 1).padStart(2, '0')}
                               </span>
@@ -776,7 +1092,7 @@ function App() {
                                 <p className="truncate text-sm font-medium">{item.track.title}</p>
                                 <p className="truncate text-xs text-zinc-500">{item.track.artist}</p>
                               </div>
-                            </button>
+                            </div>
 
                             <div className="ml-3 flex items-center gap-2">
                               <span className={`chip capitalize ${getHistoryActionClass(item.action)}`}>
@@ -810,6 +1126,9 @@ function App() {
               isPlaying={isPlaying && currentTrackId === selectedTrack?.id}
               onToggleTrackPlayback={handleToggleTrackPlayback}
               onLikeTrack={handleLikeTrack}
+              playlists={crates}
+              onAddToPlaylist={handleAddTrackToPlaylist}
+              onCreatePlaylist={handleCreatePlaylist}
               isLiked={Boolean(selectedTrack && likedTrackIdSet.has(selectedTrack.id))}
               onStartDigging={handleStartDigging}
             />
@@ -822,8 +1141,10 @@ function App() {
         queueCount={queueCount}
         isPlaying={isPlaying}
         progress={playerProgress}
+        playbackCommand={playbackCommand}
         volume={volume}
         onTogglePlay={handleTogglePlayback}
+        onPlaybackStateChange={setIsPlaying}
         canSwipeActions={Boolean(swipeTrack)}
         isSwipeTrackLiked={Boolean(swipeTrack && likedTrackIdSet.has(swipeTrack.id))}
         onSwipeSkip={handleBottomSwipeSkip}
@@ -836,6 +1157,8 @@ function App() {
         hideSwipeActions={activeScreen === 'swipe'}
         isDarkMode={shouldApplyChromeDarkMode}
       />
+
+      <ToastViewport toasts={toasts} onDismiss={dismissToast} />
     </div>
   )
 }

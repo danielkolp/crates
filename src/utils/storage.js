@@ -34,7 +34,8 @@ export function getStoredCrates(defaultCrates) {
     return defaultCrates
   }
 
-  return defaultCrates.map((crate) => {
+  const defaultIds = new Set(defaultCrates.map((crate) => crate.id))
+  const mergedDefaultCrates = defaultCrates.map((crate) => {
     const found = storedCrates.find((item) => item.id === crate.id)
     return {
       ...crate,
@@ -43,6 +44,19 @@ export function getStoredCrates(defaultCrates) {
       trackIds: Array.isArray(found?.trackIds) ? found.trackIds : [],
     }
   })
+
+  const customCrates = storedCrates
+    .filter((crate) => crate?.id && !defaultIds.has(crate.id))
+    .map((crate) => ({
+      id: String(crate.id),
+      name: String(crate.name || 'Untitled Playlist'),
+      description: String(crate.description || 'Custom playlist'),
+      trackIds: Array.isArray(crate.trackIds)
+        ? [...new Set(crate.trackIds.map((trackId) => String(trackId)).filter(Boolean))]
+        : [],
+    }))
+
+  return [...mergedDefaultCrates, ...customCrates]
 }
 
 export function saveCrates(crates) {

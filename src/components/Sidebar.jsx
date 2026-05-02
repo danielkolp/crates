@@ -6,7 +6,7 @@ const DARK_LOGO_SRC = publicAsset('images/logo-darkmode.png')
 const GEM_ICON_SRC = publicAsset('images/diamond.png')
 
 const NAV_ITEMS = [
-  { id: 'digger', label: 'Digger' },
+  { id: 'digger', label: 'Discover' },
   { id: 'swipe', label: 'Swipe Mode' },
   { id: 'crates', label: 'Playlists' },
   { id: 'liked', label: 'Liked' },

@@ -5,7 +5,7 @@ import {
   parseDurationSeconds,
 } from './filterTracks.js'
 
-// Professional deterministic music discovery scorer
+// gemScore.js - Professional deterministic music discovery scorer
 // Goal: rank underground / high-quality music tracks while filtering Shorts, spam, reactions, kids content,
 // low-confidence noise, and fake engagement.
 //

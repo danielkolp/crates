@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
-import YouTubePlayer from './YouTubePlayer'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { publicAsset } from '../utils/assetUrl'
 
 const SKIP_ICON_SRC = publicAsset('images/x.png')
 const SAVE_ICON_SRC = publicAsset('images/heart.png')
 const GEM_ICON_SRC = publicAsset('images/diamond.png')
+const PLAY_SYNC_RETRY_DELAYS = [0, 80, 180, 360, 700, 1200, 2200, 4000, 6500, 10000]
+const DIRECT_PLAY_RETRY_DELAYS = [0, 120, 300, 700, 1400, 2600]
 
 const YOUTUBE_IFRAME_SCRIPT_ID = 'youtube-iframe-api'
 let youtubeIframeApiPromise = null
@@ -63,7 +64,23 @@ function loadYouTubeIframeApi() {
 }
 
 function parseDuration(durationText) {
-  const parts = String(durationText || '')
+  const raw = String(durationText || '').trim()
+  const numeric = Number(raw)
+
+  if (Number.isFinite(numeric) && numeric > 0) {
+    return numeric
+  }
+
+  const isoMatch = raw.match(/^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/i)
+
+  if (isoMatch) {
+    const hours = Number(isoMatch[1] || 0)
+    const minutes = Number(isoMatch[2] || 0)
+    const seconds = Number(isoMatch[3] || 0)
+    return (hours * 3600) + (minutes * 60) + seconds
+  }
+
+  const parts = raw
     .split(':')
     .map((part) => Number(part))
 
@@ -78,6 +95,16 @@ function parseDuration(durationText) {
   return 0
 }
 
+function getTrackDurationSeconds(track) {
+  const directDuration = Number(track?.durationSeconds)
+
+  if (Number.isFinite(directDuration) && directDuration > 0) {
+    return directDuration
+  }
+
+  return parseDuration(track?.duration)
+}
+
 function formatTime(secondsValue) {
   const totalSeconds = Math.max(0, Math.floor(secondsValue))
   const minutes = Math.floor(totalSeconds / 60)
@@ -87,6 +114,24 @@ function formatTime(secondsValue) {
 
 function clampPercent(value) {
   return Math.max(0, Math.min(Number(value) || 0, 100))
+}
+
+function configureYouTubeIframe(player) {
+  try {
+    const iframe = player?.getIframe?.()
+
+    if (!iframe) {
+      return
+    }
+
+    iframe.setAttribute(
+      'allow',
+      'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share',
+    )
+    iframe.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin')
+  } catch {
+    // Ignore occasional transient YouTube API errors.
+  }
 }
 
 function PlayIcon({ className = 'h-4 w-4' }) {
@@ -131,8 +176,10 @@ function BottomPlayer({
   queueCount,
   isPlaying,
   progress,
+  playbackCommand = null,
   volume,
   onTogglePlay,
+  onPlaybackStateChange,
   canSwipeActions,
   isSwipeTrackLiked = false,
   onSwipeSkip,
@@ -158,6 +205,124 @@ function BottomPlayer({
   const isPlayingRef = useRef(isPlaying)
   const isScrubbingRef = useRef(false)
   const scrubPercentRef = useRef(null)
+  const playSyncTimersRef = useRef([])
+  const volumeRef = useRef(clampPercent(volume))
+  const currentTrackIdRef = useRef(currentTrack?.id || null)
+  const currentVideoIdRef = useRef(currentTrack?.youtubeVideoId || '')
+  const trackDurationSeconds = getTrackDurationSeconds(currentTrack)
+
+  const clearPlaySyncTimers = useCallback(() => {
+    playSyncTimersRef.current.forEach((timerId) => window.clearTimeout(timerId))
+    playSyncTimersRef.current = []
+  }, [])
+
+  const syncYouTubePlayback = useCallback(({ videoId = currentVideoIdRef.current, shouldPlay = isPlayingRef.current, force = false } = {}) => {
+    const player = playerRef.current
+
+    if (!isPlayerReady || !player || !videoId || currentVideoIdRef.current !== videoId) {
+      return
+    }
+
+    try {
+      let loadedNextVideo = false
+
+      player.setVolume?.(volumeRef.current)
+      if (shouldPlay && volumeRef.current > 0) {
+        player.unMute?.()
+      }
+
+      if (loadedVideoIdRef.current !== videoId) {
+        if (shouldPlay) {
+          player.loadVideoById(videoId)
+          loadedNextVideo = true
+        } else {
+          player.cueVideoById(videoId)
+        }
+
+        loadedVideoIdRef.current = videoId
+        progressValueRef.current = 0
+        fallbackTickRef.current = performance.now()
+        onProgressChange?.(0)
+      }
+
+      const playerState = Number(player.getPlayerState?.())
+      const playerStates = window.YT?.PlayerState || {}
+      const playerIsPlaying =
+        playerState === playerStates.PLAYING ||
+        playerState === playerStates.BUFFERING
+
+      if (shouldPlay) {
+        if (loadedNextVideo || force || !playerIsPlaying) {
+          player.playVideo?.()
+        }
+      } else if (force || playerIsPlaying) {
+        player.pauseVideo?.()
+      }
+    } catch {
+      // The IFrame API can throw while a video is still loading. Retries handle that path.
+    }
+  }, [isPlayerReady, onProgressChange])
+
+  const scheduleDirectPlayRetries = useCallback((videoId = currentVideoIdRef.current) => {
+    if (!videoId) {
+      return
+    }
+
+    DIRECT_PLAY_RETRY_DELAYS.forEach((delay) => {
+      const timerId = window.setTimeout(() => {
+        if (currentVideoIdRef.current !== videoId || !isPlayingRef.current) {
+          return
+        }
+
+        try {
+          playerRef.current?.unMute?.()
+          playerRef.current?.setVolume?.(volumeRef.current)
+          playerRef.current?.playVideo?.()
+        } catch {
+          // The IFrame API can throw while a video is still loading. Retries handle that path.
+        }
+      }, delay)
+
+      playSyncTimersRef.current.push(timerId)
+    })
+  }, [])
+
+  const schedulePlaybackSync = useCallback(({ videoId = currentVideoIdRef.current, shouldPlay = isPlayingRef.current } = {}) => {
+    clearPlaySyncTimers()
+
+    if (!videoId) {
+      return
+    }
+
+    PLAY_SYNC_RETRY_DELAYS.forEach((delay) => {
+      const timerId = window.setTimeout(() => {
+        if (currentVideoIdRef.current !== videoId || isPlayingRef.current !== shouldPlay) {
+          return
+        }
+
+        syncYouTubePlayback({
+          videoId,
+          shouldPlay,
+          force: delay === 0 || !shouldPlay,
+        })
+      }, delay)
+
+      playSyncTimersRef.current.push(timerId)
+    })
+
+    if (shouldPlay) {
+      scheduleDirectPlayRetries(videoId)
+    }
+  }, [clearPlaySyncTimers, scheduleDirectPlayRetries, syncYouTubePlayback])
+
+  function runImmediatePlaybackSync(nextPlaying = isPlayingRef.current) {
+    const shouldPlay = Boolean(nextPlaying)
+    const videoId = currentVideoIdRef.current
+
+    isPlayingRef.current = shouldPlay
+    syncYouTubePlayback({ videoId, shouldPlay, force: true })
+    schedulePlaybackSync({ videoId, shouldPlay })
+  }
 
   useEffect(() => {
     if (!onHeightChange || !footerRef.current) {
@@ -190,6 +355,8 @@ function BottomPlayer({
 
   useEffect(() => {
     return () => {
+      clearPlaySyncTimers()
+
       if (progressIntervalRef.current) {
         window.clearInterval(progressIntervalRef.current)
       }
@@ -199,15 +366,41 @@ function BottomPlayer({
         playerRef.current = null
       }
     }
-  }, [])
+  }, [clearPlaySyncTimers])
 
   useEffect(() => {
     progressValueRef.current = clampPercent(progress)
   }, [progress])
 
   useEffect(() => {
+    const nextTrackId = currentTrack?.id || null
+    const nextVideoId = currentTrack?.youtubeVideoId || ''
+    const trackChanged =
+      currentTrackIdRef.current !== nextTrackId ||
+      currentVideoIdRef.current !== nextVideoId
+
+    currentTrackIdRef.current = nextTrackId
+    currentVideoIdRef.current = nextVideoId
+
+    if (trackChanged) {
+      clearPlaySyncTimers()
+      if (progressIntervalRef.current) {
+        window.clearInterval(progressIntervalRef.current)
+        progressIntervalRef.current = null
+      }
+      progressValueRef.current = 0
+      fallbackTickRef.current = performance.now()
+      onProgressChange?.(0)
+    }
+  }, [currentTrack?.id, currentTrack?.youtubeVideoId, onProgressChange, clearPlaySyncTimers])
+
+  useEffect(() => {
     isPlayingRef.current = Boolean(isPlaying)
   }, [isPlaying])
+
+  useEffect(() => {
+    volumeRef.current = clampPercent(volume)
+  }, [volume])
 
   useEffect(() => {
     isScrubbingRef.current = isScrubbing
@@ -216,6 +409,26 @@ function BottomPlayer({
   useEffect(() => {
     scrubPercentRef.current = scrubPercent
   }, [scrubPercent])
+
+  useEffect(() => {
+    if (currentTrack?.youtubeVideoId) {
+      return
+    }
+
+    clearPlaySyncTimers()
+    loadedVideoIdRef.current = ''
+    progressValueRef.current = 0
+    fallbackTickRef.current = 0
+    isPlayingRef.current = false
+    onProgressChange?.(0)
+    onPlaybackStateChange?.(false)
+
+    try {
+      playerRef.current?.stopVideo?.()
+    } catch {
+      // Ignore occasional transient YouTube API errors.
+    }
+  }, [clearPlaySyncTimers, currentTrack?.youtubeVideoId, onPlaybackStateChange, onProgressChange])
 
   useEffect(() => {
     if (!currentTrack?.youtubeVideoId || playerRef.current || !audioHostRef.current) {
@@ -249,22 +462,40 @@ function BottomPlayer({
               }
 
               setIsPlayerReady(true)
+              configureYouTubeIframe(playerRef.current)
               loadedVideoIdRef.current = currentTrack.youtubeVideoId
               try {
-                playerRef.current?.setVolume(volume)
-                if (isPlayingRef.current) {
+                const readyVideoId = currentVideoIdRef.current || currentTrack.youtubeVideoId
+
+                playerRef.current?.setVolume(volumeRef.current)
+                if (readyVideoId && readyVideoId !== currentTrack.youtubeVideoId) {
+                  if (isPlayingRef.current) {
+                    playerRef.current?.loadVideoById(readyVideoId)
+                  } else {
+                    playerRef.current?.cueVideoById(readyVideoId)
+                  }
+                  loadedVideoIdRef.current = readyVideoId
+                  progressValueRef.current = 0
+                  onProgressChange?.(0)
+                } else if (isPlayingRef.current) {
                   playerRef.current?.playVideo()
+                }
+
+                if (isPlayingRef.current) {
+                  scheduleDirectPlayRetries(readyVideoId)
                 }
               } catch {
                 // Ignore occasional transient YouTube API errors.
               }
             },
             onStateChange: (event) => {
-              if (!window.YT?.PlayerState) {
+              const playerStates = window.YT?.PlayerState
+
+              if (!playerStates) {
                 return
               }
 
-              if (event.data === window.YT.PlayerState.PLAYING && !isPlayingRef.current) {
+              if (event.data === playerStates.PLAYING && !isPlayingRef.current) {
                 try {
                   playerRef.current?.pauseVideo()
                 } catch {
@@ -273,9 +504,43 @@ function BottomPlayer({
                 return
               }
 
-              if (event.data === window.YT.PlayerState.ENDED) {
+              if (event.data === playerStates.PLAYING) {
+                fallbackTickRef.current = performance.now()
+                return
+              }
+
+              if (event.data === playerStates.BUFFERING) {
+                fallbackTickRef.current = performance.now()
+                return
+              }
+
+              if (event.data === playerStates.CUED) {
+                fallbackTickRef.current = performance.now()
+                if (isPlayingRef.current) {
+                  try {
+                    playerRef.current?.playVideo()
+                  } catch {
+                    // Ignore occasional transient YouTube API errors.
+                  }
+                  scheduleDirectPlayRetries()
+                }
+                return
+              }
+
+              if (event.data === playerStates.PAUSED) {
+                fallbackTickRef.current = performance.now()
+                if (isPlayingRef.current) {
+                  scheduleDirectPlayRetries()
+                }
+                return
+              }
+
+              if (event.data === playerStates.ENDED) {
+                clearPlaySyncTimers()
+                isPlayingRef.current = false
                 progressValueRef.current = 100
                 onProgressChange?.(100)
+                onPlaybackStateChange?.(false)
                 onTrackEnd?.()
               }
             },
@@ -289,35 +554,40 @@ function BottomPlayer({
     return () => {
       isDisposed = true
     }
-  }, [currentTrack?.youtubeVideoId, onProgressChange, onTrackEnd, volume])
+  }, [clearPlaySyncTimers, currentTrack?.youtubeVideoId, onPlaybackStateChange, onProgressChange, onTrackEnd, scheduleDirectPlayRetries])
 
   useEffect(() => {
-    if (!isPlayerReady || !playerRef.current || !currentTrack?.youtubeVideoId) {
+    const commandAppliesToTrack =
+      playbackCommand?.trackId &&
+      currentTrack?.id &&
+      playbackCommand.trackId === currentTrack.id
+    const desiredShouldPlay = commandAppliesToTrack
+      ? Boolean(playbackCommand.shouldPlay)
+      : Boolean(isPlaying)
+    const videoId = currentTrack?.youtubeVideoId || ''
+
+    isPlayingRef.current = desiredShouldPlay
+
+    if (!isPlayerReady || !playerRef.current || !videoId) {
       return
     }
 
-    try {
-      if (loadedVideoIdRef.current !== currentTrack.youtubeVideoId) {
-        if (isPlaying) {
-          playerRef.current.loadVideoById(currentTrack.youtubeVideoId)
-        } else {
-          playerRef.current.cueVideoById(currentTrack.youtubeVideoId)
-        }
-        loadedVideoIdRef.current = currentTrack.youtubeVideoId
-        progressValueRef.current = 0
-        onProgressChange?.(0)
-        return
-      }
+    schedulePlaybackSync({ videoId, shouldPlay: desiredShouldPlay })
 
-      if (isPlaying) {
-        playerRef.current.playVideo()
-      } else {
-        playerRef.current.pauseVideo()
-      }
-    } catch {
-      // Ignore occasional transient YouTube API errors.
+    return () => {
+      clearPlaySyncTimers()
     }
-  }, [currentTrack?.youtubeVideoId, isPlayerReady, isPlaying, onProgressChange])
+  }, [
+    clearPlaySyncTimers,
+    currentTrack?.id,
+    currentTrack?.youtubeVideoId,
+    isPlayerReady,
+    isPlaying,
+    playbackCommand?.id,
+    playbackCommand?.shouldPlay,
+    playbackCommand?.trackId,
+    schedulePlaybackSync,
+  ])
 
   useEffect(() => {
     if (!isScrubbing) {
@@ -326,7 +596,7 @@ function BottomPlayer({
 
     function finalizeScrub() {
       const clampedPercent = clampPercent(scrubPercentRef.current ?? progressValueRef.current)
-      const fallbackDuration = parseDuration(currentTrack?.duration)
+      const fallbackDuration = trackDurationSeconds
 
       try {
         const currentDuration = Number(playerRef.current?.getDuration?.() || 0)
@@ -358,7 +628,7 @@ function BottomPlayer({
       window.removeEventListener('pointerup', finalizeScrub)
       window.removeEventListener('pointercancel', finalizeScrub)
     }
-  }, [currentTrack?.duration, isScrubbing, onProgressChange])
+  }, [isScrubbing, onProgressChange, trackDurationSeconds])
 
   useEffect(() => {
     if (!isPlaying) {
@@ -378,32 +648,41 @@ function BottomPlayer({
     progressIntervalRef.current = window.setInterval(() => {
       let nextPercent = null
       let usedPlayerTimeline = false
-      let fallbackDuration = parseDuration(currentTrack?.duration)
-      const canUseFallbackTimeline = !isPlayerReady || !playerRef.current
 
       try {
+        const playerStates = window.YT?.PlayerState || {}
+        const playerState = Number(playerRef.current?.getPlayerState?.())
         const duration = Number(playerRef.current?.getDuration?.() || 0)
         const currentTime = Number(playerRef.current?.getCurrentTime?.() || 0)
+        const playerTimelineActive =
+          playerState === playerStates.PLAYING ||
+          playerState === playerStates.BUFFERING
+
+        if (
+          isPlayingRef.current &&
+          playerRef.current &&
+          !playerTimelineActive
+        ) {
+          playerRef.current.unMute?.()
+          playerRef.current.setVolume?.(volumeRef.current)
+          playerRef.current.playVideo?.()
+        }
 
         if (duration > 0 && currentTime >= 0) {
-          usedPlayerTimeline = true
-          const quantizedSeconds = Math.floor(currentTime)
-          nextPercent = Math.min((quantizedSeconds / duration) * 100, 100)
-          fallbackDuration = duration
+          if (playerTimelineActive) {
+            usedPlayerTimeline = true
+            const quantizedSeconds = Math.floor(currentTime)
+            nextPercent = Math.min((quantizedSeconds / duration) * 100, 100)
+          } else {
+            nextPercent = progressValueRef.current
+          }
         }
       } catch {
         // Ignore occasional transient YouTube API errors.
       }
 
       if (nextPercent === null) {
-        if (canUseFallbackTimeline && fallbackDuration > 0) {
-          const now = performance.now()
-          const deltaSeconds = Math.max((now - fallbackTickRef.current) / 1000, 0)
-          fallbackTickRef.current = now
-          nextPercent = Math.min(progressValueRef.current + ((deltaSeconds / fallbackDuration) * 100), 100)
-        } else {
-          fallbackTickRef.current = performance.now()
-        }
+        fallbackTickRef.current = performance.now()
       } else {
         fallbackTickRef.current = performance.now()
       }
@@ -414,7 +693,7 @@ function BottomPlayer({
           onProgressChange?.(nextPercent)
         }
 
-        if (!isScrubbingRef.current && !usedPlayerTimeline && nextPercent >= 100) {
+        if (!isScrubbingRef.current && usedPlayerTimeline && nextPercent >= 100) {
           onTrackEnd?.()
         }
       }
@@ -426,7 +705,7 @@ function BottomPlayer({
         progressIntervalRef.current = null
       }
     }
-  }, [currentTrack?.duration, currentTrack?.youtubeVideoId, isPlayerReady, isPlaying, onProgressChange, onTrackEnd])
+  }, [currentTrack?.youtubeVideoId, isPlayerReady, isPlaying, onProgressChange, onTrackEnd, trackDurationSeconds])
 
   useEffect(() => {
     if (!isPlayerReady || !playerRef.current) {
@@ -434,7 +713,12 @@ function BottomPlayer({
     }
 
     try {
-      playerRef.current.setVolume(volume)
+      playerRef.current.setVolume(volumeRef.current)
+      if (volumeRef.current <= 0) {
+        playerRef.current.mute?.()
+      } else {
+        playerRef.current.unMute?.()
+      }
     } catch {
       // Ignore occasional transient YouTube API errors.
     }
@@ -444,15 +728,16 @@ function BottomPlayer({
     return null
   }
 
-  const totalSeconds = parseDuration(currentTrack.duration)
+  const totalSeconds = trackDurationSeconds
   const displayProgress = isScrubbing && scrubPercent !== null ? scrubPercent : progress
   const displayVolume = clampPercent(volume)
   const elapsedSeconds = (displayProgress / 100) * totalSeconds
+  const durationLabel = totalSeconds > 0 ? formatTime(totalSeconds) : currentTrack.duration
   const rangeThemeClass = isDarkMode ? 'range-control-dark' : ''
 
   function applySeekPercent(nextPercent) {
     const clampedPercent = clampPercent(nextPercent)
-    const fallbackDuration = parseDuration(currentTrack.duration)
+    const fallbackDuration = trackDurationSeconds
 
     try {
       const currentDuration = Number(playerRef.current?.getDuration?.() || 0)
@@ -487,6 +772,30 @@ function BottomPlayer({
 
     setIsScrubbing(true)
     setScrubPercent(progressValueRef.current)
+  }
+
+  function handleTogglePlayClick() {
+    const nextPlaying = !isPlayingRef.current
+    runImmediatePlaybackSync(nextPlaying)
+    onTogglePlay?.(nextPlaying)
+  }
+
+  function handleVolumeInput(nextVolume) {
+    const clampedVolume = clampPercent(nextVolume)
+    volumeRef.current = clampedVolume
+
+    try {
+      playerRef.current?.setVolume?.(clampedVolume)
+      if (clampedVolume <= 0) {
+        playerRef.current?.mute?.()
+      } else {
+        playerRef.current?.unMute?.()
+      }
+    } catch {
+      // Ignore occasional transient YouTube API errors.
+    }
+
+    onVolumeChange?.(clampedVolume)
   }
 
   return (
@@ -533,7 +842,7 @@ function BottomPlayer({
             )}
             <button
               type="button"
-              onClick={onTogglePlay}
+              onClick={handleTogglePlayClick}
               className={[
                 'tooltip-anchor grid h-9 w-9 place-items-center rounded-full border transition',
                 isDarkMode
@@ -609,7 +918,7 @@ function BottomPlayer({
                 aria-label="Seek playback"
               />
             </div>
-            <span className={`mono w-10 text-xs ${isDarkMode ? 'text-zinc-300' : 'text-zinc-500'}`}>{currentTrack.duration}</span>
+            <span className={`mono w-10 text-xs ${isDarkMode ? 'text-zinc-300' : 'text-zinc-500'}`}>{durationLabel}</span>
             <label className={`tooltip-anchor ml-1 flex items-center gap-2 ${isDarkMode ? 'text-white' : 'text-zinc-600'}`} data-tooltip="Adjust playback volume">
               <VolumeIcon volume={volume} />
               <div className="flex w-24 items-center">
@@ -618,7 +927,7 @@ function BottomPlayer({
                   min="0"
                   max="100"
                   value={volume}
-                  onChange={(event) => onVolumeChange(Number(event.target.value))}
+                  onChange={(event) => handleVolumeInput(event.target.value)}
                   className={`range-control range-control-compact ${rangeThemeClass}`}
                   style={{ '--range-fill': `${displayVolume}%` }}
                   aria-label="Volume"
@@ -645,12 +954,6 @@ function BottomPlayer({
             <div ref={audioHostRef} />
           </div>
 
-          <YouTubePlayer
-            youtubeVideoId={currentTrack.youtubeVideoId}
-            title={`${currentTrack.title} - embedded YouTube player`}
-            collapsed
-            autoPlay={isPlaying}
-          />
         </div>
       </div>
     </footer>

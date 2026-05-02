@@ -1,3 +1,7 @@
+// scoringRegression.js - Regression test for music discovery scoring system
+// This test validates that the GOLD_HIDDEN_GEM track scores highly on music likelihood, quality, and gem score, and ranks above control tracks. It also checks that safe release terms do not cause false negatives. Failures are collected and can be thrown as an error if desired.
+
+
 import { GOLD_HIDDEN_GEM } from '../data/goldHiddenGem.js'
 import { attachGemScores } from './gemScore.js'
 import {

@@ -1,7 +1,7 @@
 import { BsMoonStarsFill, BsSunFill } from 'react-icons/bs'
 
 const SCREEN_ITEMS = [
-  { id: 'digger', label: 'Search' },
+  { id: 'digger', label: 'Discover' },
   { id: 'swipe', label: 'Swipe' },
   { id: 'crates', label: 'Playlists' },
   { id: 'liked', label: 'Liked' },

@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import { BsCheckLg, BsHeartFill, BsShareFill } from 'react-icons/bs'
 import EmptyState from './EmptyState'
+import PlaylistSaver from './PlaylistSaver'
 import ShareModal from './ShareModal'
+import TrackSearchLinks from './TrackSearchLinks'
 import { getTrackSharePayload } from '../utils/share'
 
 function compactNumber(value) {
@@ -96,8 +98,11 @@ function TrackDetails({
   track,
   isPlaying,
   isLiked = false,
+  playlists = [],
   onToggleTrackPlayback,
   onLikeTrack,
+  onAddToPlaylist,
+  onCreatePlaylist,
 }) {
   const [shareOpen, setShareOpen] = useState(false)
 
@@ -117,7 +122,7 @@ function TrackDetails({
         <div className="m-3 border border-zinc-300 bg-white p-5 shadow-[0_1px_1px_rgba(0,0,0,0.03)]">
           <EmptyState
             title="No Track Selected"
-            description="Choose a track from the digger list to inspect details and save to liked tracks."
+            description="Choose a track from Discover to inspect details and save it."
           />
         </div>
       )}
@@ -200,6 +205,15 @@ function TrackDetails({
         
 
           <div className="mt-auto space-y-2">
+            <TrackSearchLinks track={track} />
+
+            <PlaylistSaver
+              track={track}
+              playlists={playlists}
+              onAddToPlaylist={onAddToPlaylist}
+              onCreatePlaylist={onCreatePlaylist}
+            />
+
             <button
               type="button"
               onClick={() => {

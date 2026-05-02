@@ -234,7 +234,7 @@ function FilterBar({
     <section className="panel space-y-4 p-4">
       <div className="flex flex-col gap-3 border-b border-zinc-200 pb-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-xl font-semibold tracking-tight">Dig for Gems</h2>
+          <h2 className="text-xl font-semibold tracking-tight">Discover Gems</h2>
           <div className="mt-1 flex flex-wrap gap-1.5 text-xs text-zinc-500">
             <span>Music only</span>
             <span aria-hidden="true">/</span>

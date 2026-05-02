@@ -1,3 +1,5 @@
+// this shouldn't be hardcoded, it was provided to AI as an example of a hidden
+
 export const GOLD_HIDDEN_GEM = {
   videoId: 'AE_fJPFMC1M',
   youtubeVideoId: 'AE_fJPFMC1M',
