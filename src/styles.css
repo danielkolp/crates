@@ -1028,4 +1028,149 @@
     color: var(--dark-muted) !important;
     text-wrap: balance;
   }
+
+  .api-quota-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 10020;
+    display: grid;
+    place-items: center;
+    padding: 2rem 1rem;
+    background: rgba(244, 244, 245, 0.68);
+    backdrop-filter: blur(8px) saturate(0.72) grayscale(0.18);
+  }
+
+  .api-quota-overlay-panel {
+    display: flex;
+    width: min(100%, 52rem);
+    align-items: center;
+    flex-direction: column;
+    text-align: center;
+  }
+
+  .api-quota-logo {
+    width: clamp(7rem, 15vw, 10rem);
+    height: auto;
+  }
+
+  .api-quota-image {
+    width: min(96vw, 48rem);
+    height: auto;
+    margin-top: 0.2rem;
+  }
+
+  .api-quota-message {
+    display: flex;
+    max-width: 44rem;
+    margin-top: 1rem;
+    flex-direction: column;
+    gap: 0.35rem;
+    color: #18181b !important;
+    font-size: clamp(1.1rem, 2.35vw, 2rem);
+    font-weight: 700;
+    line-height: 1.14;
+    text-wrap: balance;
+  }
+
+  .api-quota-actions {
+    display: flex;
+    margin-top: 1.35rem;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.75rem;
+  }
+
+  .api-quota-action {
+    display: inline-flex;
+    min-height: 2.4rem;
+    min-width: 8rem;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid #18181b !important;
+    border-radius: 8px;
+    padding: 0.6rem 0.9rem;
+    font-size: 0.875rem;
+    font-weight: 700;
+    text-decoration: none;
+    transition: background 160ms ease, color 160ms ease, border-color 160ms ease, transform 160ms ease;
+  }
+
+  .api-quota-action:hover,
+  .api-quota-action:focus-visible {
+    transform: translateY(-1px);
+  }
+
+  .api-quota-action-primary {
+    background: #18181b !important;
+    color: #ffffff !important;
+  }
+
+  .api-quota-action-secondary {
+    background: rgba(255, 255, 255, 0.76) !important;
+    color: #18181b !important;
+  }
+
+  .api-quota-action-primary:hover,
+  .api-quota-action-primary:focus-visible {
+    background: #27272a !important;
+    border-color: #27272a !important;
+  }
+
+  .api-quota-action-secondary:hover,
+  .api-quota-action-secondary:focus-visible {
+    background: #ffffff !important;
+    border-color: #27272a !important;
+  }
+
+  .api-quota-overlay-dark {
+    background: rgba(0, 0, 0, 0.58);
+  }
+
+  .api-quota-overlay-dark .api-quota-message {
+    color: #ffffff !important;
+  }
+
+  .api-quota-overlay-dark .api-quota-action {
+    border-color: #ffffff !important;
+  }
+
+  .api-quota-overlay-dark .api-quota-action-primary {
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  .api-quota-overlay-dark .api-quota-action-secondary {
+    background: rgba(0, 0, 0, 0.46) !important;
+    color: #ffffff !important;
+  }
+
+  .api-quota-overlay-dark .api-quota-action-primary:hover,
+  .api-quota-overlay-dark .api-quota-action-primary:focus-visible {
+    background: #e4e4e7 !important;
+    border-color: #e4e4e7 !important;
+  }
+
+  .api-quota-overlay-dark .api-quota-action-secondary:hover,
+  .api-quota-overlay-dark .api-quota-action-secondary:focus-visible {
+    background: rgba(255, 255, 255, 0.12) !important;
+  }
+
+  @media (max-height: 720px) {
+    .api-quota-logo {
+      width: clamp(5.5rem, 13vw, 8rem);
+    }
+
+    .api-quota-image {
+      width: min(88vw, 36rem);
+    }
+
+    .api-quota-message {
+      margin-top: 0.75rem;
+      font-size: clamp(1rem, 2vw, 1.55rem);
+    }
+
+    .api-quota-actions {
+      margin-top: 1rem;
+    }
+  }
 }

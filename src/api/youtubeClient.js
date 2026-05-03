@@ -16,6 +16,27 @@ import {
 const searchCache = new Map()
 const DEV = import.meta.env.DEV
 
+const YOUTUBE_DAILY_QUOTA_REASONS = new Set([
+  'quotaExceeded',
+  'dailyLimitExceeded',
+  'dailyLimitExceededUnreg',
+])
+
+const DISCOVERY_SEEDS = [
+  '2024',
+  '2023',
+  '2022',
+  'vinyl rip',
+  'premiere',
+  'dubplate',
+  'white label',
+  'warehouse',
+  'afterhours',
+  'underrated',
+  'rare',
+  'b side',
+]
+
 const SEARCH_DEFAULTS = [
   'underground uk garage full track',
   '2 step garage vinyl',
@@ -74,6 +95,16 @@ function wait(ms) {
   })
 }
 
+function getDiscoverySeed() {
+  return DISCOVERY_SEEDS[Math.floor(Math.random() * DISCOVERY_SEEDS.length)]
+}
+
+export function createDiscoverySeed() {
+  return getDiscoverySeed()
+}
+
+
+
 function shuffleTracks(tracks = []) {
   const next = [...tracks]
 
@@ -127,16 +158,41 @@ function extractYouTubeVideoId(value) {
   }
 }
 
-function setSearchStatus(source, usedFallback, message) {
+function setSearchStatus(source, usedFallback, message, details = {}) {
   lastSearchStatus = {
     source,
     usedFallback,
     message,
+    ...details,
   }
 }
 
 export function getLastSearchStatus() {
   return lastSearchStatus
+}
+
+function getYouTubeErrorReasons(data) {
+  const reasons = Array.isArray(data?.error?.errors)
+    ? data.error.errors.map((item) => item?.reason).filter(Boolean)
+    : []
+
+  if (data?.error?.status) {
+    reasons.push(data.error.status)
+  }
+
+  return reasons
+}
+
+function isYouTubeDailyQuotaReason(reason) {
+  return YOUTUBE_DAILY_QUOTA_REASONS.has(String(reason || '').trim())
+}
+
+export function isYouTubeDailyQuotaError(error) {
+  if (error?.isDailyQuotaExceeded) {
+    return true
+  }
+
+  return isYouTubeDailyQuotaReason(error?.quotaReason || error?.reason)
 }
 
 function normalizeCacheList(values = []) {
@@ -145,8 +201,9 @@ function normalizeCacheList(values = []) {
 
 function buildSearchKey(query, filters = {}) {
   return JSON.stringify({
-    query: query.trim().toLowerCase(),
+    query: String(query || '').trim().toLowerCase(),
     refreshKey: filters.refreshKey ?? 0,
+    discoverySeed: filters.discoverySeed ?? '',
     genre: filters.genre ?? 'all',
     style: filters.style ?? 'all',
     format: filters.format ?? 'all',
@@ -220,11 +277,17 @@ function promoWordCount(text = '') {
 
 function buildYouTubeQuery(query, filters = {}) {
   const parts = []
+
+  if (filters.discoverySeed) {
+    parts.push(filters.discoverySeed)
+  }
+
   const normalizedQuery = String(query || '').trim()
   const selectedStyle =
     filters.style && filters.style !== 'all'
       ? filters.style
       : filters.genre
+
   const hasSelectedStyle = selectedStyle && selectedStyle !== 'all'
 
   if (normalizedQuery) {
@@ -271,7 +334,6 @@ function buildYouTubeQuery(query, filters = {}) {
 
 function findHardNonMusicPattern(title = '', description = '', channel = '') {
   const haystack = `${title} ${description} ${channel}`
-
   return HARD_NON_MUSIC_PATTERNS.find(({ pattern }) => pattern.test(haystack)) || null
 }
 
@@ -287,7 +349,6 @@ function stripTopicSuffix(name = '') {
   }
 
   const withoutTopicSuffix = normalized.replace(/\s*[-\u2013\u2014]\s*topic\s*$/i, '').trim()
-
   return withoutTopicSuffix || normalized
 }
 
@@ -459,12 +520,29 @@ function evaluateVideoQuality(track, filters = {}) {
 
 async function fetchYouTubeJson(url) {
   const response = await fetch(url)
+  const data = await response.json().catch(() => null)
 
   if (!response.ok) {
-    throw new Error(`YouTube request failed: ${response.status}`)
+    console.error('[CrateDigger][youtube] full API error:', data)
+
+    const reasons = getYouTubeErrorReasons(data)
+    const reason =
+      reasons[0] ||
+      `HTTP_${response.status}`
+    const quotaReason = reasons.find(isYouTubeDailyQuotaReason) || ''
+    const error = new Error(`YouTube request failed: ${response.status} (${reason})`)
+
+    error.name = 'YouTubeApiError'
+    error.status = response.status
+    error.reason = reason
+    error.quotaReason = quotaReason
+    error.isDailyQuotaExceeded = Boolean(quotaReason)
+    error.details = data?.error || null
+
+    throw error
   }
 
-  return response.json()
+  return data
 }
 
 function getVideoId(track) {
@@ -611,7 +689,13 @@ async function fetchYouTubeTracks(query, filters = {}) {
 }
 
 export async function searchTracks(query = '', filters = {}) {
-  const cacheKey = buildSearchKey(query, filters)
+  const effectiveFilters = {
+    ...filters,
+    refreshKey: filters.refreshKey ?? 0,
+    discoverySeed: filters.discoverySeed ?? '',
+  }
+
+  const cacheKey = buildSearchKey(query, effectiveFilters)
 
   if (searchCache.has(cacheKey)) {
     return searchCache.get(cacheKey)
@@ -632,7 +716,7 @@ export async function searchTracks(query = '', filters = {}) {
     }
 
     try {
-      const apiTracks = await fetchYouTubeTracks(query, filters)
+      const apiTracks = await fetchYouTubeTracks(query, effectiveFilters)
 
       if (Array.isArray(apiTracks)) {
         setSearchStatus(
@@ -643,16 +727,28 @@ export async function searchTracks(query = '', filters = {}) {
             : 'Live YouTube results loaded.',
         )
 
-        return shuffleTracks(filterTracks(apiTracks, { ...filters, query: '' }))
+        return shuffleTracks(filterTracks(apiTracks, { ...effectiveFilters, query: '' }))
       }
     } catch (error) {
       console.error('[CrateDigger][youtube] request failed', error)
 
-      setSearchStatus(
-        'youtube',
-        false,
-        'YouTube request failed. Try again or check your API key/quota.',
-      )
+      if (isYouTubeDailyQuotaError(error)) {
+        setSearchStatus(
+          'youtube',
+          false,
+          'YouTube API daily quota exceeded. Discovery will resume after the quota resets or you update the API key.',
+          {
+            isQuotaExceeded: true,
+            errorReason: error.quotaReason || error.reason || 'quotaExceeded',
+          },
+        )
+      } else {
+        setSearchStatus(
+          'youtube',
+          false,
+          'YouTube request failed. Try again or check your API key/quota.',
+        )
+      }
 
       await wait(180)
       return []
@@ -675,7 +771,11 @@ export async function searchTracks(query = '', filters = {}) {
 }
 
 export async function searchYouTubeVideos(query = '', filters = {}) {
-  return fetchYouTubeTracks(query, filters)
+  return fetchYouTubeTracks(query, {
+    ...filters,
+    refreshKey: filters.refreshKey ?? 0,
+    discoverySeed: filters.discoverySeed ?? '',
+  })
 }
 
 export async function getTrackById(id) {

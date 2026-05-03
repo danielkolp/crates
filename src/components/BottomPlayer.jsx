@@ -724,16 +724,146 @@ function BottomPlayer({
     }
   }, [isPlayerReady, volume])
 
+  const footerClassName = [
+    'fixed bottom-0 left-0 right-0 z-30 border-t backdrop-blur-md',
+    isDarkMode ? 'border-white/60 bg-black text-white' : 'border-zinc-300 bg-zinc-50/95 text-zinc-900',
+  ].join(' ')
+  const rangeThemeClass = isDarkMode ? 'range-control-dark' : ''
+  const displayVolume = clampPercent(volume)
+
   if (!currentTrack) {
-    return null
+    return (
+      <footer ref={footerRef} className={footerClassName}>
+        <div className="mx-auto grid max-w-[1800px] grid-cols-1 gap-3 px-4 py-3 md:grid-cols-[minmax(0,260px)_1fr_auto] md:items-center md:gap-6 md:px-6">
+          <div className="flex min-w-0 items-center gap-3">
+            <div
+              className={[
+                'grid h-14 w-14 shrink-0 place-items-center rounded-xl border',
+                isDarkMode ? 'border-white/60 bg-zinc-950 text-zinc-300' : 'border-zinc-300 bg-white text-zinc-500',
+              ].join(' ')}
+            >
+              <PlayIcon className="h-5 w-5" />
+            </div>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold">No track loaded</p>
+              <p className={`truncate text-xs ${isDarkMode ? 'text-zinc-300' : 'text-zinc-500'}`}>
+                Waiting for the first discovery.
+              </p>
+              <p className={`truncate text-[11px] ${isDarkMode ? 'text-zinc-300' : 'text-zinc-500'}`}>
+                Player idle
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-center gap-3">
+              {!hideSwipeActions && (
+                <button
+                  type="button"
+                  disabled
+                  className={[
+                    'grid h-9 w-9 place-items-center rounded-full border opacity-50',
+                    isDarkMode ? 'border-white/60 bg-black' : 'border-zinc-300 bg-white',
+                  ].join(' ')}
+                  aria-label="Skip unavailable"
+                >
+                  <img src={SKIP_ICON_SRC} alt="" className="h-5 w-5" draggable={false} />
+                </button>
+              )}
+              <button
+                type="button"
+                disabled
+                className={[
+                  'grid h-9 w-9 place-items-center rounded-full border opacity-50',
+                  isDarkMode ? 'border-white/60 bg-black text-white' : 'border-zinc-300 bg-white text-zinc-500',
+                ].join(' ')}
+                aria-label="Play unavailable"
+              >
+                <PlayIcon />
+              </button>
+              {!hideSwipeActions && (
+                <button
+                  type="button"
+                  disabled
+                  className={[
+                    'grid h-9 w-9 place-items-center rounded-full border opacity-50',
+                    isDarkMode ? 'border-white/60 bg-black' : 'border-zinc-300 bg-white',
+                  ].join(' ')}
+                  aria-label="Save unavailable"
+                >
+                  <img src={SAVE_ICON_SRC} alt="" className="h-5 w-5" draggable={false} />
+                </button>
+              )}
+              {!hideSwipeActions && (
+                <button
+                  type="button"
+                  disabled
+                  className={[
+                    'grid h-9 w-9 place-items-center rounded-full border opacity-50',
+                    isDarkMode ? 'border-white/60 bg-black' : 'border-zinc-300 bg-white',
+                  ].join(' ')}
+                  aria-label="Gem unavailable"
+                >
+                  <img src={GEM_ICON_SRC} alt="" className="h-5 w-5" draggable={false} />
+                </button>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className={`mono w-10 text-right text-xs ${isDarkMode ? 'text-zinc-300' : 'text-zinc-500'}`}>0:00</span>
+              <div className="flex flex-1 items-center">
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="0.1"
+                  value="0"
+                  readOnly
+                  disabled
+                  className={`range-control ${rangeThemeClass}`}
+                  style={{ '--range-fill': '0%' }}
+                  aria-label="Playback progress unavailable"
+                />
+              </div>
+              <span className={`mono w-10 text-xs ${isDarkMode ? 'text-zinc-300' : 'text-zinc-500'}`}>0:00</span>
+              <label className={`ml-1 flex items-center gap-2 opacity-70 ${isDarkMode ? 'text-white' : 'text-zinc-600'}`}>
+                <VolumeIcon volume={volume} />
+                <div className="flex w-24 items-center">
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={displayVolume}
+                    readOnly
+                    disabled
+                    className={`range-control range-control-compact ${rangeThemeClass}`}
+                    style={{ '--range-fill': `${displayVolume}%` }}
+                    aria-label="Volume unavailable"
+                  />
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-end gap-3">
+            <span
+              className={[
+                'mono rounded-lg border px-2 py-1 text-xs',
+                isDarkMode ? 'border-white/60 bg-black text-white' : 'border-zinc-300 bg-white text-zinc-600',
+              ].join(' ')}
+            >
+              Queue {queueCount}
+            </span>
+          </div>
+        </div>
+      </footer>
+    )
   }
 
   const totalSeconds = trackDurationSeconds
   const displayProgress = isScrubbing && scrubPercent !== null ? scrubPercent : progress
-  const displayVolume = clampPercent(volume)
   const elapsedSeconds = (displayProgress / 100) * totalSeconds
   const durationLabel = totalSeconds > 0 ? formatTime(totalSeconds) : currentTrack.duration
-  const rangeThemeClass = isDarkMode ? 'range-control-dark' : ''
 
   function applySeekPercent(nextPercent) {
     const clampedPercent = clampPercent(nextPercent)
@@ -801,10 +931,7 @@ function BottomPlayer({
   return (
     <footer
       ref={footerRef}
-      className={[
-        'fixed bottom-0 left-0 right-0 z-30 border-t backdrop-blur-md',
-        isDarkMode ? 'border-white/60 bg-black text-white' : 'border-zinc-300 bg-zinc-50/95 text-zinc-900',
-      ].join(' ')}
+      className={footerClassName}
     >
       <div className="mx-auto grid max-w-[1800px] grid-cols-1 gap-3 px-4 py-3 md:grid-cols-[minmax(0,260px)_1fr_auto] md:items-center md:gap-6 md:px-6">
         <div className="flex min-w-0 items-center gap-3">
