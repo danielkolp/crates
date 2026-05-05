@@ -7,7 +7,7 @@ const DARK_QUOTA_IMAGE_SRC = publicAsset('images/403-darkmode.png')
 const QUOTA_MESSAGE_PRIMARY = 'Looks like YouTube told us to get lost.'
 const QUOTA_MESSAGE_SECONDARY = "Our API pass got bounced at the door. We'll be back tomorrow."
 
-function ApiQuotaOverlay({ isDarkMode = false, onRetry }) {
+function ApiQuotaOverlay({ isDarkMode = false, onRetry, onBrowseDemo }) {
   const logoSrc = isDarkMode ? DARK_LOGO_SRC : LIGHT_LOGO_SRC
   const quotaImageSrc = isDarkMode ? DARK_QUOTA_IMAGE_SRC : LIGHT_QUOTA_IMAGE_SRC
 
@@ -28,7 +28,16 @@ function ApiQuotaOverlay({ isDarkMode = false, onRetry }) {
           <span>{QUOTA_MESSAGE_SECONDARY}</span>
         </p>
         <div className="api-quota-actions" aria-label="Quota actions">
-          <button type="button" onClick={onRetry} className="api-quota-action api-quota-action-primary">
+          {onBrowseDemo && (
+            <button type="button" onClick={onBrowseDemo} className="api-quota-action api-quota-action-primary">
+              Browse Demo
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onRetry}
+            className={`api-quota-action ${onBrowseDemo ? 'api-quota-action-secondary' : 'api-quota-action-primary'}`}
+          >
             Try Again
           </button>
         </div>

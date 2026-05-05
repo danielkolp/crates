@@ -12,6 +12,8 @@ import SwipeMode from './components/SwipeMode'
 import TrackCollectionView from './components/TrackCollectionView'
 import ToastViewport from './components/ToastViewport'
 import HowItWorks from './components/HowItWorks'
+import ApiQuotaOverlay from './components/ApiQuotaOverlay'
+import { getDemoTracks } from './data/demoTracks'
 
 import {
   getStoredCrates,
@@ -32,6 +34,7 @@ import {
   getYouTubeGemScore,
   getYouTubeGemScoreDetails,
   logYouTubeGemScore,
+  normalizeNumericSeed,
   searchTracks,
 } from './api/youtubeClient'
 
@@ -69,6 +72,7 @@ const DEFAULT_FILTERS = {
 const DEFAULT_SEARCH_STATUS = {
   source: 'youtube',
   usedFallback: false,
+  isQuotaExceeded: false,
   message: 'Ready for live YouTube search.',
 }
 
@@ -200,6 +204,7 @@ function App() {
   const [digDeeperActive, setDigDeeperActive] = useState(false)
   const [isLoadingTracks, setIsLoadingTracks] = useState(false)
   const [searchStatus, setSearchStatus] = useState(DEFAULT_SEARCH_STATUS)
+  const [isDemoMode, setIsDemoMode] = useState(false)
   const [allTracks, setAllTracks] = useState([])
   const [trackCatalog, setTrackCatalog] = useState({})
   const [selectedTrackId, setSelectedTrackId] = useState(null)
@@ -215,6 +220,7 @@ function App() {
   const [history, setHistory] = useState(() => getHistory())
   const [swipedTrackIds, setSwipedTrackIds] = useState([])
   const [searchRefreshKey, setSearchRefreshKey] = useState(0)
+  const [currentDiscoverySeed, setCurrentDiscoverySeed] = useState(() => normalizeNumericSeed())
   const [swipeTheme, setSwipeTheme] = useState(null)
   const [toasts, setToasts] = useState([])
 
@@ -254,7 +260,10 @@ function App() {
   const shouldShowSearchNotice =
     Boolean(searchStatus.message) &&
     !isLoadingTracks &&
+    !searchStatus.isQuotaExceeded &&
     (searchStatus.usedFallback || allTracks.length === 0)
+
+  const shouldShowApiQuotaOverlay = Boolean(searchStatus.isQuotaExceeded) && !isDemoMode
 
   const swipeThemeStyle =
     shouldUseSwipeTheme
@@ -326,6 +335,10 @@ function App() {
   }, [isDarkMode])
 
   useEffect(() => {
+    if (isDemoMode) {
+      return undefined
+    }
+
     let isCancelled = false
     const loadingTimer = window.setTimeout(() => {
       if (!isCancelled) {
@@ -336,22 +349,24 @@ function App() {
     const searchTimer = window.setTimeout(() => {
       async function runSearch() {
         try {
-         const shouldUseDiscoverySeed = searchRefreshKey > 0
+          const shouldUseDiscoverySeed = searchRefreshKey > 0
+          const discoverySeed = shouldUseDiscoverySeed ? createDiscoverySeed() : ''
 
-const tracks = await searchTracks(
-  '',
-  withLockedTrackFilters({
-    ...filters,
-    digDeeperTags: digDeeperActive ? digDeeperTags : [],
-    refreshKey: searchRefreshKey,
-    discoverySeed: shouldUseDiscoverySeed ? createDiscoverySeed() : '',
-  }),
-)
+          const tracks = await searchTracks(
+            '',
+            withLockedTrackFilters({
+              ...filters,
+              digDeeperTags: digDeeperActive ? digDeeperTags : [],
+              refreshKey: searchRefreshKey,
+              discoverySeed,
+            }),
+          )
 
           if (isCancelled) {
             return
           }
 
+          setCurrentDiscoverySeed(normalizeNumericSeed(discoverySeed))
           setAllTracks(tracks)
 
           setTrackCatalog((prevCatalog) => {
@@ -384,6 +399,8 @@ const tracks = await searchTracks(
             setSearchStatus({
               source: 'youtube',
               usedFallback: false,
+              isQuotaExceeded: Boolean(error?.isDailyQuotaExceeded || error?.quotaReason),
+              errorReason: error?.quotaReason || error?.reason,
               message: 'Search failed. Check your YouTube API key or quota.',
             })
           }
@@ -402,7 +419,7 @@ const tracks = await searchTracks(
       window.clearTimeout(loadingTimer)
       window.clearTimeout(searchTimer)
     }
-  }, [filters, digDeeperActive, digDeeperTags, searchRefreshKey])
+  }, [filters, digDeeperActive, digDeeperTags, searchRefreshKey, isDemoMode])
 
   useEffect(() => {
     if (activeScreen !== 'swipe' || !swipeTrack || isLoadingTracks) {
@@ -817,6 +834,50 @@ const tracks = await searchTracks(
     setDigDeeperTags([])
   }
 
+  function handleBrowseDemoTracks() {
+    const demoTracks = getDemoTracks()
+    const firstTrackId = demoTracks[0]?.id ?? null
+
+    setIsDemoMode(true)
+    setIsLoadingTracks(false)
+    setAllTracks(demoTracks)
+    setTrackCatalog((prevCatalog) => {
+      const nextCatalog = { ...prevCatalog }
+
+      demoTracks.forEach((track) => {
+        nextCatalog[track.id] = track
+      })
+
+      return nextCatalog
+    })
+    setSelectedTrackId(firstTrackId)
+    setCurrentTrackId(firstTrackId)
+    setSwipedTrackIds([])
+    setIsPlaying(false)
+    setPlayerProgress(0)
+    setCurrentDiscoverySeed('demo')
+    setSearchStatus({
+      source: 'demo',
+      usedFallback: true,
+      isQuotaExceeded: false,
+      message: 'Demo tracks loaded. Live YouTube search is paused while you browse the app demo.',
+    })
+    navigate('/search')
+
+    pushToast({
+      tone: 'info',
+      title: 'Demo loaded',
+      message: `${demoTracks.length} demo tracks added to the browser.`,
+    })
+  }
+
+  function handleRetryApiQuotaSearch() {
+    setIsDemoMode(false)
+    setIsLoadingTracks(true)
+    setSearchStatus(DEFAULT_SEARCH_STATUS)
+    setSearchRefreshKey((prev) => prev + 1)
+  }
+
   function handleSwipeAdvance({ forcePlaybackAdvance = false } = {}) {
     const currentSwipeTrack = swipeTrack
 
@@ -833,8 +894,12 @@ const tracks = await searchTracks(
     if (hasConsumedSwipeBatch) {
       autoplayNextSwipeRef.current = true
       setSwipedTrackIds([])
-      setIsLoadingTracks(true)
-      setSearchRefreshKey((prev) => prev + 1)
+
+      if (!isDemoMode) {
+        setIsLoadingTracks(true)
+        setSearchRefreshKey((prev) => prev + 1)
+      }
+
       return
     }
 
@@ -921,6 +986,7 @@ const tracks = await searchTracks(
         isPlaying={isPlaying}
         playbackProgress={playerProgress}
         isDarkMode={shouldApplyChromeDarkMode}
+        crateSeed={currentDiscoverySeed}
       />
 
       <section className="flex h-full min-h-0 min-w-0 flex-col border-l border-zinc-300/90">
@@ -953,8 +1019,17 @@ const tracks = await searchTracks(
                 element={
                   <div className="space-y-4">
                     {shouldShowSearchNotice && (
-                      <div className="border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950">
-                        {searchStatus.message}
+                      <div className="flex flex-col gap-2 border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950 sm:flex-row sm:items-center sm:justify-between">
+                        <span>{searchStatus.message}</span>
+                        {isDemoMode && (
+                          <button
+                            type="button"
+                            onClick={handleRetryApiQuotaSearch}
+                            className="h-8 shrink-0 rounded-lg border border-amber-900/40 bg-white/70 px-3 text-xs font-semibold transition hover:border-amber-950 hover:bg-amber-950 hover:text-white"
+                          >
+                            Try Live Search
+                          </button>
+                        )}
                       </div>
                     )}
 
@@ -1171,6 +1246,14 @@ const tracks = await searchTracks(
       />
 
       <ToastViewport toasts={toasts} onDismiss={dismissToast} />
+
+      {shouldShowApiQuotaOverlay && (
+        <ApiQuotaOverlay
+          isDarkMode={shouldApplyChromeDarkMode}
+          onRetry={handleRetryApiQuotaSearch}
+          onBrowseDemo={handleBrowseDemoTracks}
+        />
+      )}
     </div>
   )
 }
