@@ -15,7 +15,7 @@ function compactNumber(value) {
   }).format(value)
 }
 
-const DETAIL_CARD_CLASS = 'track-details-card rounded-2xl border border-zinc-200 bg-white p-3 shadow-[0_1px_1px_rgba(0,0,0,0.02)]'
+const DETAIL_CARD_CLASS = 'track-details-card rounded-xl border border-zinc-200 bg-white p-3'
 
 function getGemScoreTone(score) {
   const value = Number(score) || 0
@@ -117,7 +117,7 @@ function TrackDetails({
   const gemScorePercent = Math.max(0, Math.min((Number(track?.gemScore) || 0) * 10, 100))
 
   return (
-    <aside className="track-details h-full min-h-0 overflow-hidden border-t border-zinc-300/90 bg-zinc-50 xl:border-t-0">
+    <aside className="track-details h-full min-h-0 overflow-y-auto border-t border-zinc-200 bg-zinc-50 xl:border-t-0">
       {!track && (
         <div className="m-3 border border-zinc-300 bg-white p-5 shadow-[0_1px_1px_rgba(0,0,0,0.03)]">
           <EmptyState
@@ -128,19 +128,19 @@ function TrackDetails({
       )}
 
       {track && (
-        <div className="flex h-full min-h-0 flex-col gap-3 p-3">
-          <section className="track-details-hero relative overflow-hidden rounded-3xl border border-zinc-300 bg-zinc-900">
+        <div className="flex min-h-full flex-col gap-3 p-3">
+          <section className="track-details-hero relative overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-900">
             <img
               src={track.artworkUrl}
               alt={track.title}
-              className="track-details-hero-image h-72 w-full object-cover opacity-95"
+              className="track-details-hero-image h-56 w-full object-cover opacity-95"
               loading="lazy"
             />
             <div className="absolute inset-0 bg-gradient-to-t from-zinc-950/95 via-zinc-950/35 to-transparent" />
 
             <div className="absolute inset-x-0 bottom-0 p-4 text-white">
-              <p className="text-2xl font-semibold leading-[1.05] tracking-tight">{track.title}</p>
-              <p className="mt-1 text-lg text-zinc-200">{track.artist}</p>
+              <p className="text-xl font-semibold leading-[1.08] tracking-tight">{track.title}</p>
+              <p className="mt-1 text-sm text-zinc-200">{track.artist}</p>
               <div className="mt-3 flex items-center justify-between gap-3">
                 <p className="mono text-xs uppercase tracking-[0.12em] text-zinc-300">
                   {track.publishedAt?.slice(0, 4) || '2000'} - {track.genre || 'Underground'}
@@ -148,7 +148,7 @@ function TrackDetails({
                 <button
                   type="button"
                   onClick={() => onToggleTrackPlayback(track.id)}
-                  className="tooltip-anchor track-details-play-button group inline-flex items-center gap-2 rounded-2xl bg-white px-4 py-2 text-sm font-semibold text-zinc-900 transition hover:bg-emerald-500 hover:text-white"
+                  className="tooltip-anchor track-details-play-button group inline-flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-sm font-semibold text-zinc-900 transition hover:bg-emerald-600 hover:text-white"
                   data-tooltip={isPlaying ? 'Pause this track' : 'Play this track'}
                 >
                   <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
@@ -160,27 +160,11 @@ function TrackDetails({
             </div>
           </section>
 
-          <section className={`${DETAIL_CARD_CLASS} track-details-stats grid grid-cols-3 divide-x divide-zinc-200`}>
-            <div className="px-2">
-              <div className="flex items-center gap-2">
-                <StatIcon kind="views" />
-                <p className="muted-label">Views</p>
-              </div>
-              <p className="mt-2 text-3xl font-semibold leading-none md:text-4xl">{compactNumber(track.views)}</p>
-            </div>
-            <div className="px-3">
-              <div className="flex items-center gap-2">
-                <StatIcon kind="likes" />
-                <p className="muted-label">Likes</p>
-              </div>
-              <p className="mt-2 text-3xl font-semibold leading-none md:text-4xl">{compactNumber(track.likes)}</p>
-            </div>
-            <div className="px-3">
-              <div className="flex items-center gap-2">
-                <StatIcon kind="comments" />
-                <p className="muted-label">Comments</p>
-              </div>
-              <p className="mt-2 text-3xl font-semibold leading-none md:text-4xl">{compactNumber(track.comments)}</p>
+          <section className={`${DETAIL_CARD_CLASS} track-details-stats`}>
+            <div className="grid grid-cols-3 divide-x divide-zinc-200 text-center">
+              <p className="px-2 text-sm font-semibold">{compactNumber(track.views)} <span className="text-xs font-medium text-zinc-500">views</span></p>
+              <p className="px-2 text-sm font-semibold">{compactNumber(track.likes)} <span className="text-xs font-medium text-zinc-500">likes</span></p>
+              <p className="px-2 text-sm font-semibold">{compactNumber(track.comments)} <span className="text-xs font-medium text-zinc-500">comments</span></p>
             </div>
           </section>
 
@@ -189,20 +173,14 @@ function TrackDetails({
               <StatIcon kind="gem" />
               <p className="muted-label">Gem Score</p>
             </div>
-            <p className={`mt-2 text-6xl font-semibold leading-none ${getGemScoreTone(track.gemScore)}`}>{track.gemScore.toFixed(1)}</p>
-            <div className="track-details-gem-meter mt-4 h-2 overflow-hidden rounded-full bg-zinc-200">
+            <p className={`mt-2 text-5xl font-semibold leading-none ${getGemScoreTone(track.gemScore)}`}>{track.gemScore.toFixed(1)}</p>
+            <div className="track-details-gem-meter mt-3 h-2 overflow-hidden rounded-full bg-zinc-200">
               <span
                 className="track-details-gem-fill block h-full rounded-full"
                 style={{ width: `${gemScorePercent}%`, backgroundColor: getGemScoreFill(track.gemScore) }}
               />
             </div>
-            {track.gemReason && <p className="track-details-gem-reason mt-3 text-sm text-zinc-600">{track.gemReason}</p>}
           </section>
-
-        
-
-        
-        
 
           <div className="mt-auto space-y-2">
             <TrackSearchLinks track={track} />
@@ -225,7 +203,7 @@ function TrackDetails({
                 'tooltip-anchor track-details-save-btn group flex w-full items-center justify-center gap-2 rounded-2xl px-4 py-3 text-lg font-semibold transition',
                 isLiked
                   ? 'border border-emerald-300 bg-emerald-50 text-emerald-700'
-                  : 'bg-gradient-to-r from-zinc-950 via-zinc-900 to-zinc-800 text-white hover:from-emerald-600 hover:to-emerald-500',
+                  : 'border border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-500',
               ].join(' ')}
               data-tooltip={isLiked ? 'Saved to liked' : 'Save this track to Liked'}
             >
@@ -236,7 +214,7 @@ function TrackDetails({
             <button
               type="button"
               onClick={handleShareTrack}
-              className="tooltip-anchor track-details-share-btn hover-swap flex w-full items-center justify-center gap-2 rounded-2xl border border-zinc-300 bg-white px-4 py-3 text-lg font-semibold text-zinc-900 transition hover:border-sky-500 hover:bg-sky-500 hover:text-white"
+              className="tooltip-anchor track-details-share-btn hover-swap flex w-full items-center justify-center gap-2 rounded-xl border border-zinc-300 bg-white px-4 py-2.5 text-sm font-semibold text-zinc-900 transition hover:border-zinc-900 hover:bg-zinc-900 hover:text-white"
               data-tooltip="Open share options for this track"
             >
               <span className="hover-swap-text">Share</span>

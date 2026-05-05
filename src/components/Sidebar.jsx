@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { publicAsset } from '../utils/assetUrl'
 
 const LIGHT_LOGO_SRC = publicAsset('images/logo.png')
@@ -12,6 +12,7 @@ const NAV_ITEMS = [
   { id: 'liked', label: 'Liked' },
   { id: 'gems', label: 'Gems', icon: GEM_ICON_SRC },
   { id: 'history', label: 'History' },
+  { id: 'how-it-works', label: 'How It Works' },
 ]
 
 const GENRE_BPM = {
@@ -76,11 +77,15 @@ function Sidebar({
   isPlaying = false,
   playbackProgress = 0,
   isDarkMode = false,
+  crateSeed = '',
 }) {
   const logoRef = useRef(null)
   const progressSnapshotRef = useRef({ seconds: 0, updatedAt: 0 })
   const smoothImpactRef = useRef(0)
   const beatClockRef = useRef({ bpm: 124, phaseOffset: 0 })
+  const [seedCopied, setSeedCopied] = useState(false)
+  const seedCopyTimerRef = useRef(0)
+  const displaySeed = String(crateSeed || '').trim()
 
   const playbackSnapshotSeconds = useMemo(() => {
     if (!currentTrack) {
@@ -125,6 +130,12 @@ function Sidebar({
     Promise.all(preloaders).catch(() => undefined)
   }, [])
 
+  useEffect(() => () => {
+    if (seedCopyTimerRef.current) {
+      window.clearTimeout(seedCopyTimerRef.current)
+    }
+  }, [])
+
   useEffect(() => {
     let animationFrameId = 0
 
@@ -166,15 +177,37 @@ function Sidebar({
     }
   }, [isPlaying])
 
+  async function handleCopySeed() {
+    if (!displaySeed) {
+      return
+    }
+
+    try {
+      await navigator.clipboard.writeText(displaySeed)
+      setSeedCopied(true)
+
+      if (seedCopyTimerRef.current) {
+        window.clearTimeout(seedCopyTimerRef.current)
+      }
+
+      seedCopyTimerRef.current = window.setTimeout(() => {
+        setSeedCopied(false)
+        seedCopyTimerRef.current = 0
+      }, 1200)
+    } catch {
+      setSeedCopied(false)
+    }
+  }
+
   return (
-    <aside className={`relative z-40 hidden h-full border-r border-zinc-300/90 bg-zinc-50 lg:flex lg:w-64 lg:flex-col ${isDarkMode ? 'theme-dark-chrome' : ''}`}>
-      <div className="border-b border-zinc-300 px-5 py-5">
+    <aside className={`relative z-40 hidden h-full border-r border-zinc-200/40 bg-zinc-50/70 lg:flex lg:w-[15rem] lg:flex-col ${isDarkMode ? 'theme-dark-chrome' : ''}`}>
+      <div className="border-b border-zinc-200/30 px-5 py-6">
         <div className="flex items-center justify-center">
           <img
             ref={logoRef}
             src={isDarkMode ? DARK_LOGO_SRC : LIGHT_LOGO_SRC}
             alt="Crate Digger"
-            className="h-36 w-36 will-change-transform"
+            className="h-28 w-28 will-change-transform"
             loading="eager"
             decoding="sync"
             fetchPriority="high"
@@ -182,24 +215,24 @@ function Sidebar({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 py-5">
+      <div className="flex-1 overflow-y-auto px-3 py-8">
         <div>
-          <p className="mb-2 px-2 text-xs font-medium uppercase tracking-[0.14em] text-zinc-500">Discover</p>
-          <div className="space-y-1">
+          <p className="mb-4 px-2 text-[11px] font-medium uppercase tracking-[0.14em] text-zinc-400">Navigate</p>
+          <div className="space-y-2">
             {NAV_ITEMS.map((item) => (
               <button
                 key={item.id}
                 type="button"
                 onClick={() => onScreenChange(item.id)}
                 className={[
-                  'tooltip-anchor tooltip-bottom flex w-full items-center justify-between gap-2 rounded-xl border px-3 py-2.5 text-left text-sm font-medium transition',
+                  'tooltip-anchor tooltip-bottom flex w-full items-center justify-between gap-2 rounded-lg border border-transparent px-3 py-2.5 text-left text-sm font-medium transition',
                   item.id === 'gems'
                     ? activeScreen === item.id
-                      ? 'gems-tab gems-tab-active border-amber-400 bg-amber-300 text-amber-950 shadow-[0_0_24px_rgba(251,191,36,0.85)]'
-                      : 'gems-tab gems-tab-inactive border-amber-300 bg-amber-100 text-amber-900 hover:-rotate-2 hover:scale-[1.04] hover:border-amber-400 hover:bg-amber-200 hover:shadow-[0_0_24px_rgba(251,191,36,0.85)]'
+                      ? 'gems-tab gems-tab-active bg-amber-50 text-amber-900 shadow-[inset_2px_0_0_#f59e0b]'
+                      : 'gems-tab gems-tab-inactive text-amber-700 hover:bg-amber-50'
                     : activeScreen === item.id
-                      ? 'border-zinc-900 bg-zinc-900 text-white'
-                      : 'border-transparent text-zinc-700 hover:border-zinc-300 hover:bg-white',
+                      ? 'bg-white/80 text-zinc-950 shadow-[inset_2px_0_0_#18181b]'
+                      : 'text-zinc-500 hover:bg-white/70 hover:text-zinc-900',
                 ].join(' ')}
                 data-tooltip={`Go to ${item.label}`}
               >
@@ -212,6 +245,20 @@ function Sidebar({
           </div>
         </div>
       </div>
+
+      {displaySeed && (
+        <div className="px-5 pb-5">
+          <button
+            type="button"
+            onClick={handleCopySeed}
+            className="mono inline-flex max-w-full border-0 bg-transparent p-0 text-left text-[11px] leading-4 text-zinc-400 opacity-70 transition hover:text-zinc-700 hover:opacity-100"
+            title="Copy crate seed"
+            aria-label={`Copy crate seed ${displaySeed}`}
+          >
+            <span className="truncate">{seedCopied ? 'Seed copied' : `Seed: ${displaySeed}`}</span>
+          </button>
+        </div>
+      )}
     </aside>
   )
 }

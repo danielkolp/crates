@@ -1,4 +1,4 @@
-// this shouldn't be hardcoded, it was provided to AI as an example of a hidden
+// this shouldn't be hardcoded, it was provided to AI as an example of a hidden gem
 
 export const GOLD_HIDDEN_GEM = {
   videoId: 'AE_fJPFMC1M',

@@ -22,19 +22,188 @@ const YOUTUBE_DAILY_QUOTA_REASONS = new Set([
   'dailyLimitExceededUnreg',
 ])
 
-const DISCOVERY_SEEDS = [
-  '2024',
-  '2023',
-  '2022',
-  'vinyl rip',
+const SEED_QUERY_COUNT = 6
+const YOUTUBE_RESULTS_PER_QUERY = 12
+const YOUTUBE_VIDEO_DETAILS_BATCH_SIZE = 50
+const DEFAULT_NUMERIC_SEED = '10000000'
+const DISCOVERY_YEAR_START = 2012
+const DISCOVERY_YEAR_END = 2026
+
+const DISCOVERY_YEARS = Array.from(
+  { length: DISCOVERY_YEAR_END - DISCOVERY_YEAR_START + 1 },
+  (_, index) => String(DISCOVERY_YEAR_END - index),
+)
+
+const DISCOVERY_STYLES = [
+  'uk garage',
+  '2 step garage',
+  'speed garage',
+  'deep house',
+  'lo-fi house',
+  'tech house',
+  'dub techno',
+  'breakbeat',
+  'jungle',
+  'electro',
+  'minimal',
+  'soulful house',
+  'uk funky',
+  'bassline',
+  'downtempo',
+  'ambient',
+]
+
+const TRACK_VERSION_TERMS = [
+  'original mix',
+  'extended mix',
+  'dub mix',
+  'club mix',
+]
+
+const OCCASIONAL_TRACK_VERSION_TERMS = [
+  'extended mix',
+  'dub mix',
+  'club mix',
+]
+
+const TRACK_FIRST_QUERY_FORMATS = [
+  'official audio',
+  'provided to youtube',
+  'topic',
+  'single',
+  'track',
+  'release',
+  'original mix',
   'premiere',
-  'dubplate',
   'white label',
-  'warehouse',
-  'afterhours',
-  'underrated',
-  'rare',
+  'vinyl rip',
   'b side',
+]
+
+const DISCOVERY_FORMATS = [
+  ...TRACK_FIRST_QUERY_FORMATS,
+  ...OCCASIONAL_TRACK_VERSION_TERMS,
+]
+
+const DISCOVERY_CONTEXTS = [
+  'underground',
+  'rare',
+  'deep cut',
+  'small label',
+  'independent',
+  'afterhours',
+  'warehouse',
+  'dubplate',
+  '12 inch',
+  'self released',
+]
+
+const DISCOVERY_QUERY_ACCENTS = [
+  'deep cut',
+  'low views',
+  'small label',
+  'independent release',
+  'underrated',
+  'raw',
+  'club track',
+  'dancefloor',
+  'record label',
+  'upload',
+]
+
+const DISCOVERY_INTENT_GROUPS = [
+  ['official audio', 'single'],
+  ['provided to youtube', 'topic'],
+  ['track', 'release'],
+  ['single', 'release'],
+  ['official audio', 'track'],
+  ['premiere', 'original mix'],
+  ['full track', 'music'],
+  ['vinyl', 'white label'],
+]
+
+const STYLE_VARIANT_GROUPS = [
+  {
+    aliases: ['uk garage', 'ukg', 'garage'],
+    variants: [
+      'uk garage',
+      'ukg',
+      '2 step garage',
+      '2-step garage',
+      'speed garage',
+      'white label uk garage',
+      'uk garage dub mix',
+      'uk garage vinyl rip',
+    ],
+  },
+  {
+    aliases: ['house', 'deep house', 'tech house', 'soulful house'],
+    variants: [
+      'deep house',
+      'underground house',
+      'lo-fi house',
+      'tech house',
+      'soulful house',
+      'house original mix',
+      'house vinyl rip',
+      'house dub mix',
+    ],
+  },
+  {
+    aliases: ['techno', 'dub techno', 'minimal'],
+    variants: [
+      'techno',
+      'dub techno',
+      'minimal techno',
+      'detroit techno',
+      'warehouse techno',
+      'techno dub mix',
+      'techno vinyl rip',
+    ],
+  },
+  {
+    aliases: ['breakbeat', 'breaks', 'jungle', 'drum & bass', 'drum and bass', 'dnb'],
+    variants: [
+      'breakbeat',
+      'breaks',
+      'jungle',
+      'drum and bass',
+      'dnb',
+      'breaks dubplate',
+      'jungle vinyl rip',
+      'breakbeat white label',
+    ],
+  },
+  {
+    aliases: ['electro', 'ambient', 'downtempo'],
+    variants: [
+      'electro',
+      'ambient',
+      'downtempo',
+      'electronica',
+      'idm',
+      'ambient dub',
+      'electro vinyl rip',
+    ],
+  },
+  {
+    aliases: ['uk funky', 'bassline'],
+    variants: [
+      'uk funky',
+      'bassline',
+      'funky house',
+      'uk funky white label',
+      'bassline dub',
+      'uk funky vinyl rip',
+    ],
+  },
+]
+
+const ALL_DISCOVERY_STYLE_VARIANTS = [
+  ...new Set([
+    ...DISCOVERY_STYLES,
+    ...STYLE_VARIANT_GROUPS.flatMap((group) => group.variants),
+  ]),
 ]
 
 const SEARCH_DEFAULTS = [
@@ -46,18 +215,16 @@ const SEARCH_DEFAULTS = [
 ]
 
 const MUSIC_INTENT_APPEND = [
+  'official audio',
+  'provided to youtube',
+  'topic',
+  'single',
+  'track',
+  'release',
   'full track',
   'music',
-  'official audio',
+  'original mix',
   'premiere',
-  'vinyl',
-  'white label',
-  'dub',
-  'mix',
-  'uk garage',
-  '2-step',
-  'house',
-  'breaks',
 ]
 
 const OPTIONAL_INTENT = [
@@ -65,9 +232,9 @@ const OPTIONAL_INTENT = [
   'topic',
   'provided to youtube',
   'single',
-  'ep',
+  'release',
+  'track',
   'original mix',
-  'extended mix',
 ]
 
 const HARD_NON_MUSIC_PATTERNS = [
@@ -81,7 +248,36 @@ const HARD_NON_MUSIC_PATTERNS = [
   { label: 'game-content', pattern: /\bminecraft\b|\broblox\b|\bfortnite\b/i },
 ]
 
-const EXCLUDE_TERMS = ['-shorts', '-reaction', '-kids', '-news', '-cover', '-tutorial']
+const HARD_LONG_FORM_TITLE_PATTERN =
+  /\b(?:dj\s*set|live\s*set|radio\s*show|podcast|compilation|playlist|boiler\s*room|essential\s*mix|mixmag|hour\s*mix|full\s*mix)\b/i
+
+const DATED_MIX_TITLE_PATTERN =
+  /\bmix\s*(?:20\d{2})\b|\b(?:20\d{2})\s*mix\b/i
+
+const LONG_FORM_DURATION_KEYWORD_PATTERN =
+  /\b(?:mix|set|session|radio|show|compilation|playlist)\b/i
+
+const TRACK_VERSION_TITLE_PATTERN = new RegExp(
+  `\\b(?:${TRACK_VERSION_TERMS.map((term) => term.replace(/\s+/g, '\\s+')).join('|')})\\b`,
+  'i',
+)
+
+const EXCLUDE_TERMS = [
+  '-shorts',
+  '-reaction',
+  '-kids',
+  '-news',
+  '-cover',
+  '-tutorial',
+  '-podcast',
+  '-compilation',
+  '-playlist',
+  '-boiler',
+  '-mixmag',
+  '-"dj set"',
+  '-"live set"',
+  '-"radio show"',
+]
 
 let lastSearchStatus = {
   source: 'youtube',
@@ -95,21 +291,93 @@ function wait(ms) {
   })
 }
 
-function getDiscoverySeed() {
-  return DISCOVERY_SEEDS[Math.floor(Math.random() * DISCOVERY_SEEDS.length)]
+function getEntropyInt(maxExclusive) {
+  const max = Math.max(Number(maxExclusive) || 1, 1)
+
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    const values = new Uint32Array(1)
+    crypto.getRandomValues(values)
+    return values[0] % max
+  }
+
+  const performanceNow =
+    typeof performance !== 'undefined' && performance.now
+      ? performance.now()
+      : 0
+  const fallback = Date.now() + Math.floor(performanceNow * 1000)
+  return Math.abs(fallback) % max
 }
 
-export function createDiscoverySeed() {
-  return getDiscoverySeed()
+export function createNumericSeed() {
+  const length = 8 + getEntropyInt(9)
+  const digits = [String(1 + getEntropyInt(9))]
+
+  for (let index = 1; index < length; index += 1) {
+    digits.push(String(getEntropyInt(10)))
+  }
+
+  return digits.join('')
 }
 
+export function normalizeNumericSeed(seed = DEFAULT_NUMERIC_SEED) {
+  const rawValue =
+    typeof seed === 'object' && seed
+      ? seed.numericSeed || seed.id || seed.seed || ''
+      : seed
 
+  const digits = String(rawValue || '').replace(/\D/g, '')
 
-function shuffleTracks(tracks = []) {
-  const next = [...tracks]
+  if (!digits) {
+    return DEFAULT_NUMERIC_SEED
+  }
+
+  if (digits.length < 8) {
+    return digits.padEnd(8, '0')
+  }
+
+  return digits.slice(0, 16)
+}
+
+function hashSeed(seed) {
+  const value = String(seed || DEFAULT_NUMERIC_SEED)
+  let hash = 2166136261
+
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+
+  return hash >>> 0
+}
+
+export function createSeededRandom(seed = DEFAULT_NUMERIC_SEED) {
+  let state = hashSeed(seed) || 0x6d2b79f5
+
+  return function seededRandom() {
+    state += 0x6d2b79f5
+
+    let value = state
+    value = Math.imul(value ^ (value >>> 15), value | 1)
+    value ^= value + Math.imul(value ^ (value >>> 7), value | 61)
+
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+export function seededPick(array = [], rng = createSeededRandom()) {
+  if (!Array.isArray(array) || array.length === 0) {
+    return undefined
+  }
+
+  const index = Math.floor(rng() * array.length)
+  return array[Math.min(index, array.length - 1)]
+}
+
+export function seededShuffle(array = [], rng = createSeededRandom()) {
+  const next = [...array]
 
   for (let index = next.length - 1; index > 0; index -= 1) {
-    const swapIndex = Math.floor(Math.random() * (index + 1))
+    const swapIndex = Math.floor(rng() * (index + 1))
     ;[next[index], next[swapIndex]] = [next[swapIndex], next[index]]
   }
 
@@ -199,11 +467,147 @@ function normalizeCacheList(values = []) {
   return [...values].map((value) => String(value).toLowerCase()).sort()
 }
 
+function normalizeDiscoveryText(value = '') {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[^\w\s&+-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function uniqueDiscoveryValues(values = []) {
+  return [...new Set(values.map((value) => String(value || '').trim()).filter(Boolean))]
+}
+
+function getSelectedDiscoveryStyle(filters = {}) {
+  const selectedStyle =
+    filters.style && filters.style !== 'all'
+      ? filters.style
+      : filters.genre && filters.genre !== 'all'
+        ? filters.genre
+        : ''
+
+  return String(selectedStyle || '').trim()
+}
+
+function getKnownStyleVariants(style) {
+  const normalizedStyle = normalizeDiscoveryText(style)
+
+  if (!normalizedStyle) {
+    return []
+  }
+
+  const variantGroup = STYLE_VARIANT_GROUPS.find((group) =>
+    group.aliases.some((alias) => normalizeDiscoveryText(alias) === normalizedStyle),
+  )
+
+  return variantGroup?.variants || []
+}
+
+function getStyleVariantPool(filters = {}) {
+  const selectedStyle = getSelectedDiscoveryStyle(filters)
+
+  if (!selectedStyle) {
+    return ALL_DISCOVERY_STYLE_VARIANTS
+  }
+
+  const knownVariants = getKnownStyleVariants(selectedStyle)
+
+  return uniqueDiscoveryValues([
+    selectedStyle,
+    ...knownVariants,
+    `underground ${selectedStyle}`,
+    `${selectedStyle} original mix`,
+    `${selectedStyle} extended mix`,
+    `${selectedStyle} dub mix`,
+    `${selectedStyle} vinyl rip`,
+    `${selectedStyle} white label`,
+  ])
+}
+
+function buildSeedUploadWindow(year, spanYears = 1) {
+  const numericYear = Number(year)
+  const numericSpan = Math.max(Number(spanYears) || 1, 1)
+
+  if (!Number.isInteger(numericYear) || numericYear < DISCOVERY_YEAR_START) {
+    return null
+  }
+
+  const startYear = Math.min(Math.max(numericYear, DISCOVERY_YEAR_START), DISCOVERY_YEAR_END)
+  const endYear = Math.min(startYear + numericSpan, DISCOVERY_YEAR_END + 1)
+  const after = Date.UTC(startYear, 0, 1)
+  const before = Date.UTC(endYear, 0, 1)
+
+  if (before <= after) {
+    return null
+  }
+
+  return {
+    after: new Date(after).toISOString(),
+    before: new Date(before).toISOString(),
+  }
+}
+
+export function buildSeedProfile(seed = DEFAULT_NUMERIC_SEED, filters = {}) {
+  const numericSeed = normalizeNumericSeed(seed)
+  const rng = createSeededRandom(`${numericSeed}:profile`)
+  const styleVariants = seededShuffle(getStyleVariantPool(filters), rng)
+  const style = styleVariants[0] || seededPick(ALL_DISCOVERY_STYLE_VARIANTS, rng) || 'underground music'
+  const format = seededPick(DISCOVERY_FORMATS, rng) || 'official audio'
+  const context = seededPick(DISCOVERY_CONTEXTS, rng) || 'underground'
+  const year = seededPick(DISCOVERY_YEARS, rng) || String(DISCOVERY_YEAR_END)
+  const windowSpanYears = seededPick([1, 1, 1, 2, 2, 3], rng) || 1
+  const uploadWindow = buildSeedUploadWindow(year, windowSpanYears)
+
+  return {
+    id: numericSeed,
+    numericSeed,
+    selectedGenre: getSelectedDiscoveryStyle(filters) || 'all',
+    style,
+    styleVariants,
+    format,
+    context,
+    year,
+    windowSpanYears,
+    uploadWindow,
+    queryPlan: [],
+  }
+}
+
+export function createDiscoverySeed(seedOrFilters, maybeFilters = {}) {
+  const firstArgLooksLikeFilters =
+    seedOrFilters &&
+    typeof seedOrFilters === 'object' &&
+    !seedOrFilters.numericSeed &&
+    !seedOrFilters.seed &&
+    !seedOrFilters.id
+
+  const filters = firstArgLooksLikeFilters ? seedOrFilters : maybeFilters
+  const seed = firstArgLooksLikeFilters || seedOrFilters === undefined || seedOrFilters === null
+    ? createNumericSeed()
+    : seedOrFilters
+  const seedProfile = buildSeedProfile(seed, filters)
+  const queryPlan = buildSeededSearchQueries('', filters, seedProfile)
+
+  return {
+    ...seedProfile,
+    queryPlan,
+  }
+}
+
+function getDiscoverySeedKey(discoverySeed) {
+  return normalizeNumericSeed(discoverySeed)
+}
+
 function buildSearchKey(query, filters = {}) {
   return JSON.stringify({
     query: String(query || '').trim().toLowerCase(),
     refreshKey: filters.refreshKey ?? 0,
-    discoverySeed: filters.discoverySeed ?? '',
+    discoverySeed: getDiscoverySeedKey(filters.discoverySeed),
+    seedQueryCount: SEED_QUERY_COUNT,
+    youtubeResultsPerQuery: YOUTUBE_RESULTS_PER_QUERY,
     genre: filters.genre ?? 'all',
     style: filters.style ?? 'all',
     format: filters.format ?? 'all',
@@ -275,12 +679,75 @@ function promoWordCount(text = '') {
   return promoWords.reduce((count, word) => count + (normalized.includes(word) ? 1 : 0), 0)
 }
 
-function buildYouTubeQuery(query, filters = {}) {
-  const parts = []
+function getTrackDurationSeconds(track) {
+  const directDuration = Number(track?.durationSeconds)
 
-  if (filters.discoverySeed) {
-    parts.push(filters.discoverySeed)
+  if (Number.isFinite(directDuration) && directDuration >= 0) {
+    return directDuration
   }
+
+  return parseYouTubeDuration(String(track?.duration || '')).seconds
+}
+
+function titleClearlyLooksLikeSingleTrack(title = '') {
+  const normalizedTitle = String(title || '').trim()
+
+  if (!normalizedTitle) {
+    return false
+  }
+
+  if (HARD_LONG_FORM_TITLE_PATTERN.test(normalizedTitle) || DATED_MIX_TITLE_PATTERN.test(normalizedTitle)) {
+    return false
+  }
+
+  if (TRACK_VERSION_TITLE_PATTERN.test(normalizedTitle)) {
+    return true
+  }
+
+  return (
+    /\S+\s[-\u2013\u2014]\s\S+/.test(normalizedTitle) &&
+    !LONG_FORM_DURATION_KEYWORD_PATTERN.test(normalizedTitle)
+  )
+}
+
+export function isLikelyLongFormMix(track) {
+  const title = String(track?.title || '')
+  const durationSeconds = getTrackDurationSeconds(track)
+
+  if (HARD_LONG_FORM_TITLE_PATTERN.test(title) || DATED_MIX_TITLE_PATTERN.test(title)) {
+    return true
+  }
+
+  if (durationSeconds > 20 * 60) {
+    return !titleClearlyLooksLikeSingleTrack(title)
+  }
+
+  if (durationSeconds > 12 * 60 && LONG_FORM_DURATION_KEYWORD_PATTERN.test(title)) {
+    return true
+  }
+
+  return false
+}
+
+function getSeededTerms(values = [], rng, limit = 2) {
+  return seededShuffle(values, rng).slice(0, limit).filter(Boolean)
+}
+
+function getSeededQueryFormatPool(seedProfile, filters, rng) {
+  const selectedFormat = filters.format && filters.format !== 'all' ? filters.format : ''
+  const occasionalTrackVersion = seededPick(OCCASIONAL_TRACK_VERSION_TERMS, rng)
+
+  return uniqueDiscoveryValues([
+    seedProfile.format,
+    selectedFormat,
+    ...TRACK_FIRST_QUERY_FORMATS,
+    occasionalTrackVersion,
+  ])
+}
+
+function buildYouTubeQuery(query, filters = {}, seedProfile = buildSeedProfile(filters.discoverySeed, filters), queryPlanItem = {}) {
+  const parts = []
+  const rng = createSeededRandom(`${seedProfile.numericSeed}:query:${queryPlanItem.index ?? 0}`)
 
   const normalizedQuery = String(query || '').trim()
   const selectedStyle =
@@ -289,22 +756,41 @@ function buildYouTubeQuery(query, filters = {}) {
       : filters.genre
 
   const hasSelectedStyle = selectedStyle && selectedStyle !== 'all'
+  const style = queryPlanItem.style || seedProfile.style
+  const format = filters.format && filters.format !== 'all'
+    ? filters.format
+    : queryPlanItem.format || seedProfile.format
+  const context = queryPlanItem.context || seedProfile.context
+  const accent = queryPlanItem.accent || seededPick(DISCOVERY_QUERY_ACCENTS, rng)
+  const intentGroup = queryPlanItem.intentGroup || seededPick(DISCOVERY_INTENT_GROUPS, rng) || []
 
   if (normalizedQuery) {
     parts.push(normalizedQuery)
+    if (style) {
+      parts.push(style)
+    }
   } else if (hasSelectedStyle) {
-    parts.push(`underground ${selectedStyle} full track`)
+    parts.push(`underground ${style || selectedStyle}`)
+  } else if (style) {
+    parts.push(`underground ${style}`)
   } else {
-    const seed = SEARCH_DEFAULTS[Math.floor(Math.random() * SEARCH_DEFAULTS.length)]
-    parts.push(seed)
+    parts.push(seededPick(SEARCH_DEFAULTS, rng))
   }
 
-  if (hasSelectedStyle && normalizedQuery) {
+  if (hasSelectedStyle && normalizedQuery && !normalizeDiscoveryText(normalizedQuery).includes(normalizeDiscoveryText(selectedStyle))) {
     parts.push(selectedStyle)
   }
 
-  if (filters.format && filters.format !== 'all') {
-    parts.push(filters.format)
+  if (format) {
+    parts.push(format)
+  }
+
+  if (context) {
+    parts.push(context)
+  }
+
+  if (accent) {
+    parts.push(accent)
   }
 
   if (filters.vibe && filters.vibe !== 'all') {
@@ -320,16 +806,60 @@ function buildYouTubeQuery(query, filters = {}) {
   }
 
   if (filters.musicTracksOnly !== false) {
-    parts.push(...MUSIC_INTENT_APPEND.slice(0, 4))
+    parts.push(...uniqueDiscoveryValues([...intentGroup, ...getSeededTerms(MUSIC_INTENT_APPEND, rng, 1)]))
   }
 
   if (filters.preferTopicChannels !== false) {
-    parts.push(...OPTIONAL_INTENT.slice(0, 3))
+    parts.push(...getSeededTerms(OPTIONAL_INTENT, rng, 2))
   }
 
   parts.push(...EXCLUDE_TERMS)
 
-  return parts.join(' ').replace(/\s+/g, ' ').trim()
+  return uniqueDiscoveryValues(parts)
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+export function buildSeededSearchQueries(query = '', filters = {}, seedProfile = buildSeedProfile(filters.discoverySeed, filters)) {
+  const rng = createSeededRandom(`${seedProfile.numericSeed}:queries`)
+  const styles = seededShuffle(seedProfile.styleVariants?.length ? seedProfile.styleVariants : getStyleVariantPool(filters), rng)
+  const formats = seededShuffle(getSeededQueryFormatPool(seedProfile, filters, rng), rng)
+  const contexts = seededShuffle(uniqueDiscoveryValues([
+    seedProfile.context,
+    ...DISCOVERY_CONTEXTS,
+    ...DISCOVERY_QUERY_ACCENTS,
+  ]), rng)
+  const queryPlan = []
+  const seenQueries = new Set()
+  const maxAttempts = SEED_QUERY_COUNT * 4
+
+  for (let attempt = 0; queryPlan.length < SEED_QUERY_COUNT && attempt < maxAttempts; attempt += 1) {
+    const planItem = {
+      index: queryPlan.length,
+      style: styles[attempt % styles.length] || seedProfile.style,
+      format: formats[attempt % formats.length] || seedProfile.format,
+      context: contexts[attempt % contexts.length] || seedProfile.context,
+      accent: seededPick(DISCOVERY_QUERY_ACCENTS, rng),
+      intentGroup: seededPick(DISCOVERY_INTENT_GROUPS, rng),
+      year: seedProfile.year,
+      uploadWindow: seedProfile.uploadWindow,
+    }
+    const searchQuery = buildYouTubeQuery(query, filters, seedProfile, planItem)
+    const normalizedSearchQuery = normalizeDiscoveryText(searchQuery)
+
+    if (!normalizedSearchQuery || seenQueries.has(normalizedSearchQuery)) {
+      continue
+    }
+
+    seenQueries.add(normalizedSearchQuery)
+    queryPlan.push({
+      ...planItem,
+      searchQuery,
+    })
+  }
+
+  return queryPlan
 }
 
 function findHardNonMusicPattern(title = '', description = '', channel = '') {
@@ -436,6 +966,15 @@ function evaluateVideoQuality(track, filters = {}) {
   const hashtagCountTitle = countHashtags(title)
   const hashtagCountDescription = countHashtags(description)
   const qualityScore = getTrackQualityScore(track)
+
+  if (isLikelyLongFormMix(track)) {
+    return {
+      keep: false,
+      reason: 'rejected: long-form mix/set',
+      qualityScore,
+      musicLikelihood,
+    }
+  }
 
   if (filters.hideShorts !== false && isLikelyShort(track)) {
     return {
@@ -573,13 +1112,14 @@ function summarizeTopTrack(track) {
   }
 }
 
-function debugYouTubeResults({ searchQuery, candidates, accepted, rejectedCounts, scored }) {
+function debugYouTubeResults({ searchQuery, queryPlan, candidates, accepted, rejectedCounts, scored }) {
   if (!DEV) {
     return
   }
 
   console.groupCollapsed(`[CrateDigger][youtube] accepted ${accepted.length}/${candidates.length}`)
   console.log('query:', searchQuery)
+  console.table(queryPlan || [])
 
   console.table(
     Array.from(rejectedCounts.entries()).map(([reason, count]) => ({
@@ -621,6 +1161,58 @@ function debugYouTubeResults({ searchQuery, candidates, accepted, rejectedCounts
   console.groupEnd()
 }
 
+function chunkArray(values = [], chunkSize = YOUTUBE_VIDEO_DETAILS_BATCH_SIZE) {
+  const chunks = []
+
+  for (let index = 0; index < values.length; index += chunkSize) {
+    chunks.push(values.slice(index, index + chunkSize))
+  }
+
+  return chunks
+}
+
+async function fetchYouTubeSearchVideoIds(apiKey, queryPlanItem) {
+  const searchUrl = new URL('https://www.googleapis.com/youtube/v3/search')
+
+  searchUrl.searchParams.set('part', 'snippet')
+  searchUrl.searchParams.set('type', 'video')
+  searchUrl.searchParams.set('maxResults', String(YOUTUBE_RESULTS_PER_QUERY))
+  searchUrl.searchParams.set('videoCategoryId', '10')
+  searchUrl.searchParams.set('videoEmbeddable', 'true')
+  searchUrl.searchParams.set('videoSyndicated', 'true')
+  searchUrl.searchParams.set('safeSearch', 'none')
+  searchUrl.searchParams.set('q', queryPlanItem.searchQuery)
+  searchUrl.searchParams.set('key', apiKey)
+
+  if (queryPlanItem.uploadWindow) {
+    searchUrl.searchParams.set('publishedAfter', queryPlanItem.uploadWindow.after)
+    searchUrl.searchParams.set('publishedBefore', queryPlanItem.uploadWindow.before)
+  }
+
+  const searchResult = await fetchYouTubeJson(searchUrl.toString())
+  return (searchResult.items || []).map((item) => item.id?.videoId).filter(Boolean)
+}
+
+async function fetchYouTubeVideosByIds(apiKey, videoIds = []) {
+  const videosById = new Map()
+
+  for (const videoIdChunk of chunkArray(videoIds)) {
+    const videosUrl = new URL('https://www.googleapis.com/youtube/v3/videos')
+
+    videosUrl.searchParams.set('part', 'snippet,statistics,contentDetails')
+    videosUrl.searchParams.set('id', videoIdChunk.join(','))
+    videosUrl.searchParams.set('key', apiKey)
+
+    const videosResult = await fetchYouTubeJson(videosUrl.toString())
+
+    ;(videosResult.items || []).forEach((item) => {
+      videosById.set(item.id, item)
+    })
+  }
+
+  return videosById
+}
+
 async function fetchYouTubeTracks(query, filters = {}) {
   const apiKey = getApiKey()
 
@@ -628,35 +1220,29 @@ async function fetchYouTubeTracks(query, filters = {}) {
     return []
   }
 
-  const searchQuery = buildYouTubeQuery(query, filters)
-  const searchUrl = new URL('https://www.googleapis.com/youtube/v3/search')
+  const seedProfile = buildSeedProfile(filters.discoverySeed, filters)
+  const queryPlan = buildSeededSearchQueries(query, filters, seedProfile)
+  const seenVideoIds = new Set()
+  const videoIds = []
 
-  searchUrl.searchParams.set('part', 'snippet')
-  searchUrl.searchParams.set('type', 'video')
-  searchUrl.searchParams.set('maxResults', '36')
-  searchUrl.searchParams.set('videoCategoryId', '10')
-  searchUrl.searchParams.set('videoEmbeddable', 'true')
-  searchUrl.searchParams.set('videoSyndicated', 'true')
-  searchUrl.searchParams.set('safeSearch', 'none')
-  searchUrl.searchParams.set('q', searchQuery)
-  searchUrl.searchParams.set('key', apiKey)
+  for (const queryPlanItem of queryPlan) {
+    const queryVideoIds = await fetchYouTubeSearchVideoIds(apiKey, queryPlanItem)
 
-  const searchResult = await fetchYouTubeJson(searchUrl.toString())
-  const videoIds = (searchResult.items || []).map((item) => item.id?.videoId).filter(Boolean)
+    queryVideoIds.forEach((videoId) => {
+      if (seenVideoIds.has(videoId)) {
+        return
+      }
+
+      seenVideoIds.add(videoId)
+      videoIds.push(videoId)
+    })
+  }
 
   if (videoIds.length === 0) {
     return []
   }
 
-  const videosUrl = new URL('https://www.googleapis.com/youtube/v3/videos')
-
-  videosUrl.searchParams.set('part', 'snippet,statistics,contentDetails')
-  videosUrl.searchParams.set('id', videoIds.join(','))
-  videosUrl.searchParams.set('key', apiKey)
-
-  const videosResult = await fetchYouTubeJson(videosUrl.toString())
-  const videosById = new Map((videosResult.items || []).map((item) => [item.id, item]))
-
+  const videosById = await fetchYouTubeVideosByIds(apiKey, videoIds)
   const candidates = videoIds
     .map((videoId) => normalizeYouTubeVideo(videosById.get(videoId), filters))
     .filter(Boolean)
@@ -678,7 +1264,8 @@ async function fetchYouTubeTracks(query, filters = {}) {
   const scored = attachGemScores(accepted)
 
   debugYouTubeResults({
-    searchQuery,
+    searchQuery: queryPlan.map((item) => item.searchQuery).join(' | '),
+    queryPlan,
     candidates,
     accepted,
     rejectedCounts,
@@ -694,6 +1281,8 @@ export async function searchTracks(query = '', filters = {}) {
     refreshKey: filters.refreshKey ?? 0,
     discoverySeed: filters.discoverySeed ?? '',
   }
+  const seedProfile = buildSeedProfile(effectiveFilters.discoverySeed, effectiveFilters)
+  const queryPlan = buildSeededSearchQueries(query, effectiveFilters, seedProfile)
 
   const cacheKey = buildSearchKey(query, effectiveFilters)
 
@@ -725,9 +1314,18 @@ export async function searchTracks(query = '', filters = {}) {
           apiTracks.length === 0
             ? 'No clean music tracks found for this search.'
             : 'Live YouTube results loaded.',
+          {
+            discoverySeed: {
+              ...seedProfile,
+              queryPlan,
+            },
+          },
         )
 
-        return shuffleTracks(filterTracks(apiTracks, { ...effectiveFilters, query: '' }))
+        return seededShuffle(
+          filterTracks(apiTracks, { ...effectiveFilters, query: '' }),
+          createSeededRandom(`${seedProfile.numericSeed}:result-order`),
+        )
       }
     } catch (error) {
       console.error('[CrateDigger][youtube] request failed', error)

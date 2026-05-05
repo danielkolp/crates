@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { publicAsset } from '../utils/assetUrl'
 
-const SKIP_ICON_SRC = publicAsset('images/x.png')
 const SAVE_ICON_SRC = publicAsset('images/heart.png')
 const GEM_ICON_SRC = publicAsset('images/diamond.png')
+const SKIP_ICON_SRC = publicAsset('images/x.png')
 const PLAY_SYNC_RETRY_DELAYS = [0, 80, 180, 360, 700, 1200, 2200, 4000, 6500, 10000]
 const DIRECT_PLAY_RETRY_DELAYS = [0, 120, 300, 700, 1400, 2600]
 
@@ -734,11 +734,11 @@ function BottomPlayer({
   if (!currentTrack) {
     return (
       <footer ref={footerRef} className={footerClassName}>
-        <div className="mx-auto grid max-w-[1800px] grid-cols-1 gap-3 px-4 py-3 md:grid-cols-[minmax(0,260px)_1fr_auto] md:items-center md:gap-6 md:px-6">
-          <div className="flex min-w-0 items-center gap-3">
+        <div className="mx-auto grid max-w-[120rem] grid-cols-1 gap-2 px-4 py-2 md:grid-cols-[minmax(0,18rem)_1fr_auto] md:items-center md:gap-5 md:px-6">
+          <div className="flex min-w-0 items-center gap-2.5">
             <div
               className={[
-                'grid h-14 w-14 shrink-0 place-items-center rounded-xl border',
+                'grid h-10 w-10 shrink-0 place-items-center rounded-lg border',
                 isDarkMode ? 'border-white/60 bg-zinc-950 text-zinc-300' : 'border-zinc-300 bg-white text-zinc-500',
               ].join(' ')}
             >
@@ -756,13 +756,13 @@ function BottomPlayer({
           </div>
 
           <div className="space-y-2">
-            <div className="flex items-center justify-center gap-3">
+            <div className="flex items-center justify-center gap-4">
               {!hideSwipeActions && (
                 <button
                   type="button"
                   disabled
                   className={[
-                    'grid h-9 w-9 place-items-center rounded-full border opacity-50',
+                    'grid h-8 w-8 place-items-center rounded-full border opacity-50',
                     isDarkMode ? 'border-white/60 bg-black' : 'border-zinc-300 bg-white',
                   ].join(' ')}
                   aria-label="Skip unavailable"
@@ -774,7 +774,7 @@ function BottomPlayer({
                 type="button"
                 disabled
                 className={[
-                  'grid h-9 w-9 place-items-center rounded-full border opacity-50',
+                  'grid h-8 w-8 place-items-center rounded-full border opacity-50',
                   isDarkMode ? 'border-white/60 bg-black text-white' : 'border-zinc-300 bg-white text-zinc-500',
                 ].join(' ')}
                 aria-label="Play unavailable"
@@ -786,7 +786,7 @@ function BottomPlayer({
                   type="button"
                   disabled
                   className={[
-                    'grid h-9 w-9 place-items-center rounded-full border opacity-50',
+                    'grid h-8 w-8 place-items-center rounded-full border opacity-50',
                     isDarkMode ? 'border-white/60 bg-black' : 'border-zinc-300 bg-white',
                   ].join(' ')}
                   aria-label="Save unavailable"
@@ -799,7 +799,7 @@ function BottomPlayer({
                   type="button"
                   disabled
                   className={[
-                    'grid h-9 w-9 place-items-center rounded-full border opacity-50',
+                    'grid h-8 w-8 place-items-center rounded-full border opacity-50',
                     isDarkMode ? 'border-white/60 bg-black' : 'border-zinc-300 bg-white',
                   ].join(' ')}
                   aria-label="Gem unavailable"
@@ -933,12 +933,12 @@ function BottomPlayer({
       ref={footerRef}
       className={footerClassName}
     >
-      <div className="mx-auto grid max-w-[1800px] grid-cols-1 gap-3 px-4 py-3 md:grid-cols-[minmax(0,260px)_1fr_auto] md:items-center md:gap-6 md:px-6">
-        <div className="flex min-w-0 items-center gap-3">
+      <div className="mx-auto grid max-w-[120rem] grid-cols-1 gap-2 px-4 py-2 md:grid-cols-[minmax(0,18rem)_1fr_auto] md:items-center md:gap-5 md:px-6">
+        <div className="flex min-w-0 items-center gap-2.5">
           <img
             src={currentTrack.artworkUrl}
             alt={currentTrack.title}
-            className={`h-14 w-14 rounded-xl border object-cover ${isDarkMode ? 'border-white/60' : 'border-zinc-300'}`}
+            className={`h-10 w-10 rounded-lg border object-cover ${isDarkMode ? 'border-white/60' : 'border-zinc-300'}`}
             loading="lazy"
           />
           <div className="min-w-0">
@@ -949,17 +949,17 @@ function BottomPlayer({
         </div>
 
         <div className="space-y-2">
-          <div className="flex items-center justify-center gap-3">
+          <div className="flex items-center justify-center gap-4">
             {!hideSwipeActions && (
               <button
                 type="button"
                 onClick={onSwipeSkip}
                 disabled={!canSwipeActions}
                 className={[
-                  'tooltip-anchor grid h-9 w-9 place-items-center rounded-full border transition disabled:cursor-not-allowed disabled:opacity-50',
+                  'tooltip-anchor grid h-8 w-8 place-items-center rounded-full border transition disabled:cursor-not-allowed disabled:opacity-50',
                   isDarkMode
-                    ? 'border-white/60 bg-black text-white hover:bg-zinc-900'
-                    : 'border-zinc-300 bg-white hover:border-zinc-900 hover:bg-zinc-900',
+                    ? 'border-red-400 bg-red-500 text-white hover:bg-red-400'
+                    : 'border-red-500 bg-red-500 text-white hover:bg-red-400',
                 ].join(' ')}
                 aria-label="Skip track"
                 data-tooltip="Skip track (same as swipe left)"
@@ -971,7 +971,7 @@ function BottomPlayer({
               type="button"
               onClick={handleTogglePlayClick}
               className={[
-                'tooltip-anchor grid h-9 w-9 place-items-center rounded-full border transition',
+                'tooltip-anchor grid h-8 w-8 place-items-center rounded-full border transition',
                 isDarkMode
                   ? 'border-white/60 bg-black text-white hover:bg-zinc-900'
                   : 'border-zinc-900 bg-zinc-900 text-white hover:bg-zinc-700',
@@ -987,12 +987,12 @@ function BottomPlayer({
                 onClick={onSwipeSave}
                 disabled={!canSwipeActions}
                 className={[
-                  'tooltip-anchor grid h-9 w-9 place-items-center rounded-full border transition disabled:cursor-not-allowed disabled:opacity-50',
+                  'tooltip-anchor grid h-8 w-8 place-items-center rounded-full border transition disabled:cursor-not-allowed disabled:opacity-50',
                   isSwipeTrackLiked
                     ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
                     : isDarkMode
-                      ? 'border-white/60 bg-black text-white hover:border-emerald-500 hover:bg-emerald-500'
-                      : 'border-zinc-300 bg-white hover:border-emerald-500 hover:bg-emerald-500',
+                      ? 'border-emerald-500 bg-emerald-600 text-white hover:bg-emerald-500'
+                      : 'border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-500',
                 ].join(' ')}
                 aria-label={isSwipeTrackLiked ? 'Saved to liked' : 'Save track'}
                 data-tooltip={isSwipeTrackLiked ? 'Saved to liked' : 'Save to liked tracks (same as swipe right)'}
@@ -1006,10 +1006,10 @@ function BottomPlayer({
                 onClick={onSwipeGem}
                 disabled={!canSwipeActions}
                 className={[
-                  'tooltip-anchor grid h-9 w-9 place-items-center rounded-full border transition disabled:cursor-not-allowed disabled:opacity-50',
+                  'tooltip-anchor grid h-8 w-8 place-items-center rounded-full border transition disabled:cursor-not-allowed disabled:opacity-50',
                   isDarkMode
-                    ? 'border-white/60 bg-black text-white hover:border-amber-500 hover:bg-amber-400'
-                    : 'border-zinc-300 bg-white hover:border-amber-500 hover:bg-amber-400',
+                    ? 'border-amber-400 bg-amber-400 text-zinc-950 hover:bg-amber-300'
+                    : 'border-amber-400 bg-amber-300 text-amber-950 hover:bg-amber-200',
                 ].join(' ')}
                 aria-label="Gem track"
                 data-tooltip="Mark as gem (same as swipe down)"

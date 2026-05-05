@@ -700,7 +700,7 @@ function SwipeMode({
           <div className={`h-8 w-28 ${skeletonLineClass}`} />
         </header>
 
-        <article className={`swipe-workspace grid min-h-0 flex-1 grid-cols-1 gap-3 rounded-2xl border p-2 md:grid-cols-[260px_minmax(340px,1fr)_300px] md:p-3 ${isDarkMode ? 'border-white/15 bg-black/50' : 'border-zinc-200 bg-zinc-50'}`}>
+        <article className={`swipe-workspace grid min-h-0 flex-1 grid-cols-1 gap-3 rounded-2xl border p-2 md:grid-cols-[18rem_minmax(24rem,1fr)_20rem] md:p-3 ${isDarkMode ? 'border-white/15 bg-black/50' : 'border-zinc-200 bg-zinc-50'}`}>
           <div className={`h-full ${skeletonBlockClass}`} />
           <div className="min-h-0 space-y-3 overflow-hidden">
             <div className={`swipe-skeleton-card mx-auto w-full max-w-xl ${skeletonBlockClass}`} />
@@ -766,7 +766,7 @@ function SwipeMode({
 
       <article
         className={[
-          'swipe-workspace mx-auto grid min-h-0 flex-1 w-full max-w-7xl grid-cols-1 gap-3 rounded-2xl border p-2 md:grid-cols-[260px_minmax(340px,1fr)_300px] md:p-3',
+          'swipe-workspace mx-auto grid min-h-0 flex-1 w-full max-w-7xl grid-cols-1 gap-3 rounded-2xl border p-2 md:grid-cols-[18rem_minmax(24rem,1fr)_20rem] md:p-3',
           darkFallbackActive ? 'border-white/15 bg-black/50' : 'border-zinc-200 bg-zinc-50',
         ].join(' ')}
         style={articleStyle}
@@ -878,7 +878,7 @@ function SwipeMode({
                     </span>
                   </div>
 
-                  <div className="swipe-card-artwork relative h-[260px] w-full overflow-hidden sm:h-[300px] md:h-[320px]">
+                  <div className="swipe-card-artwork relative w-full overflow-hidden">
                     <img
                       src={artworkSrc}
                       alt={track.title}

@@ -4,13 +4,11 @@ import EmptyState from './EmptyState'
 function TrackTable({
   tracks,
   isLoading,
-  selectedTrackId,
   currentTrackId,
   isPlaying,
-  playbackProgress,
   likedTrackIds = [],
   onLikeTrack,
-  onSelectTrack,
+  onRemoveFromLiked,
   onToggleTrackPlayback,
 }) {
   const likedTrackIdSet = new Set(likedTrackIds)
@@ -42,31 +40,25 @@ function TrackTable({
   }
 
   return (
-    <section className="panel min-h-0 overflow-visible">
+    <section className="panel min-h-0 overflow-visible rounded-xl shadow-sm">
       <div className="overflow-visible">
         <div className="w-full">
-          <div className="track-table-grid grid border-b border-zinc-200 px-3 py-3 text-xs font-semibold uppercase tracking-[0.08em] text-zinc-500">
-            <span>#</span>
+          <div className="track-table-grid grid border-b border-zinc-200 bg-zinc-50 px-3 py-2.5 text-xs font-semibold uppercase tracking-[0.08em] text-zinc-500">
             <span>Track</span>
-            <span>Artist</span>
-            <span>Views</span>
-            <span>Likes</span>
-            <span>Comments</span>
-            <span>Gem Score</span>
-            <span>Actions</span>
+            <span className="hidden text-zinc-400 md:block">Artist</span>
+            <span className="text-zinc-400">Views</span>
+            <span className="justify-self-end">Gem</span>
+            <span className="justify-self-end">Actions</span>
           </div>
           <div className="divide-y divide-zinc-200">
-            {tracks.map((track, index) => (
+            {tracks.map((track) => (
               <TrackRow
                 key={track.id}
-                rank={index + 1}
                 track={track}
-                isSelected={selectedTrackId === track.id}
                 isPlaying={isPlaying && currentTrackId === track.id}
-                playbackProgress={isPlaying && currentTrackId === track.id ? playbackProgress : 0}
                 isLiked={likedTrackIdSet.has(track.id)}
                 onLikeTrack={onLikeTrack}
-                onSelect={() => onSelectTrack(track.id)}
+                onRemoveFromLiked={onRemoveFromLiked}
                 onPlay={() => onToggleTrackPlayback(track.id)}
               />
             ))}

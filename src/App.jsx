@@ -11,7 +11,6 @@ import EmptyState from './components/EmptyState'
 import SwipeMode from './components/SwipeMode'
 import TrackCollectionView from './components/TrackCollectionView'
 import ToastViewport from './components/ToastViewport'
-import ApiQuotaOverlay from './components/ApiQuotaOverlay'
 
 import {
   getStoredCrates,
@@ -27,6 +26,7 @@ import {
 
 import {
   addTrackToCrate as addTrackToCrateApi,
+  createDiscoverySeed,
   getLastSearchStatus,
   getYouTubeGemScore,
   getYouTubeGemScoreDetails,
@@ -248,9 +248,7 @@ function App() {
   const shouldShowSearchNotice =
     Boolean(searchStatus.message) &&
     !isLoadingTracks &&
-    !searchStatus.isQuotaExceeded &&
     (searchStatus.usedFallback || allTracks.length === 0)
-  const shouldShowQuotaOverlay = Boolean(searchStatus.isQuotaExceeded)
 
   const swipeThemeStyle =
     shouldUseSwipeTheme
@@ -332,14 +330,17 @@ function App() {
     const searchTimer = window.setTimeout(() => {
       async function runSearch() {
         try {
-          const tracks = await searchTracks(
-            '',
-            withLockedTrackFilters({
-              ...filters,
-              digDeeperTags: digDeeperActive ? digDeeperTags : [],
-              refreshKey: searchRefreshKey,
-            }),
-          )
+         const shouldUseDiscoverySeed = searchRefreshKey > 0
+
+const tracks = await searchTracks(
+  '',
+  withLockedTrackFilters({
+    ...filters,
+    digDeeperTags: digDeeperActive ? digDeeperTags : [],
+    refreshKey: searchRefreshKey,
+    discoverySeed: shouldUseDiscoverySeed ? createDiscoverySeed() : '',
+  }),
+)
 
           if (isCancelled) {
             return
@@ -810,10 +811,6 @@ function App() {
     setDigDeeperTags([])
   }
 
-  function handleRetryQuotaSearch() {
-    window.location.reload()
-  }
-
   function handleSwipeAdvance({ forcePlaybackAdvance = false } = {}) {
     const currentSwipeTrack = swipeTrack
 
@@ -909,7 +906,7 @@ function App() {
       } ${shouldUseSwipeTheme ? 'theme-swipe' : ''} ${
         shouldApplySwipeDarkMode ? 'theme-swipe-dark' : ''
       }`}
-      style={{ height: '100dvh', paddingBottom: `${playerReservedHeight}px`, ...swipeThemeStyle }}
+      style={{ height: `calc(100dvh - ${playerReservedHeight}px)`, ...swipeThemeStyle }}
     >
       <Sidebar
         activeScreen={activeScreen}
@@ -1166,13 +1163,6 @@ function App() {
       />
 
       <ToastViewport toasts={toasts} onDismiss={dismissToast} />
-
-      {shouldShowQuotaOverlay && (
-        <ApiQuotaOverlay
-          isDarkMode={shouldApplyChromeDarkMode}
-          onRetry={handleRetryQuotaSearch}
-        />
-      )}
     </div>
   )
 }
