@@ -11,6 +11,7 @@ import EmptyState from './components/EmptyState'
 import SwipeMode from './components/SwipeMode'
 import TrackCollectionView from './components/TrackCollectionView'
 import ToastViewport from './components/ToastViewport'
+import HowItWorks from './components/HowItWorks'
 
 import {
   getStoredCrates,
@@ -41,6 +42,7 @@ const SCREEN_TO_PATH = {
   liked: '/liked',
   gems: '/gems',
   history: '/history',
+  'how-it-works': '/how-it-works',
 }
 
 const THEME_STORAGE_KEY = 'music-ui-theme-mode'
@@ -126,6 +128,10 @@ function getActiveScreen(pathname) {
 
   if (pathname.startsWith('/history')) {
     return 'history'
+  }
+
+  if (pathname.startsWith('/how-it-works')) {
+    return 'how-it-works'
   }
 
   return 'digger'
@@ -1119,6 +1125,8 @@ const tracks = await searchTracks(
                   </section>
                 }
               />
+
+              <Route path="/how-it-works" element={<HowItWorks />} />
 
               <Route path="/settings" element={<Navigate to="/search" replace />} />
             </Routes>
