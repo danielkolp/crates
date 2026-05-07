@@ -349,17 +349,19 @@ function App() {
     const searchTimer = window.setTimeout(() => {
       async function runSearch() {
         try {
-          const shouldUseDiscoverySeed = searchRefreshKey > 0
-          const discoverySeed = shouldUseDiscoverySeed ? createDiscoverySeed() : ''
+          const searchFilters = withLockedTrackFilters({
+            ...filters,
+            digDeeperTags: digDeeperActive ? digDeeperTags : [],
+            refreshKey: searchRefreshKey,
+          })
+          const discoverySeed = createDiscoverySeed(searchFilters)
 
           const tracks = await searchTracks(
             '',
-            withLockedTrackFilters({
-              ...filters,
-              digDeeperTags: digDeeperActive ? digDeeperTags : [],
-              refreshKey: searchRefreshKey,
+            {
+              ...searchFilters,
               discoverySeed,
-            }),
+            },
           )
 
           if (isCancelled) {
@@ -994,6 +996,7 @@ function App() {
           activeScreen={activeScreen}
           onScreenChange={handleScreenChange}
           isDarkMode={shouldApplyChromeDarkMode}
+          isDemoMode={isDemoMode}
           onToggleTheme={() => setIsDarkMode((prev) => !prev)}
         />
 

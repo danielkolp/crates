@@ -10,7 +10,7 @@ const SCREEN_ITEMS = [
   { id: 'how-it-works', label: 'How' },
 ]
 
-function TopNav({ activeScreen, onScreenChange, isDarkMode, onToggleTheme }) {
+function TopNav({ activeScreen, onScreenChange, isDarkMode, isDemoMode = false, onToggleTheme }) {
   return (
     <header className={`sticky top-0 z-20 border-b border-zinc-200 bg-zinc-50/90 px-4 py-2.5 backdrop-blur-md md:px-6 ${isDarkMode ? 'theme-dark-chrome' : ''}`}>
       <div className="flex items-center justify-end gap-2">
@@ -35,6 +35,12 @@ function TopNav({ activeScreen, onScreenChange, isDarkMode, onToggleTheme }) {
             </button>
           ))}
         </nav>
+
+        {isDemoMode && (
+          <span className="mono inline-flex h-9 shrink-0 items-center rounded-lg border border-amber-300 bg-amber-50 px-3 text-xs font-bold tracking-[0.14em] text-amber-800">
+            DEMO
+          </span>
+        )}
 
         <button
           type="button"
