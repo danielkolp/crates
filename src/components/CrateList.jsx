@@ -211,7 +211,7 @@ function CrateList({
                         <img
                           src={track.artworkUrl}
                           alt={track.title}
-                          className="h-10 w-10 rounded-lg border border-zinc-200 object-cover"
+                          className="aspect-square h-10 w-10 rounded-lg border border-zinc-200 object-cover"
                         />
                         <div className="min-w-0">
                           <p className="truncate text-sm font-medium">{track.title}</p>

@@ -15,14 +15,12 @@ function compactNumber(value) {
   }).format(value)
 }
 
-const DETAIL_CARD_CLASS = 'track-details-card rounded-xl border border-zinc-200 bg-white p-3'
-
 function getGemScoreTone(score) {
   const value = Number(score) || 0
 
-  if (value >= 7.5) return 'text-emerald-600'
-  if (value >= 5) return 'text-amber-600'
-  return 'text-red-600'
+  if (value >= 7.5) return 'track-details-gem-high'
+  if (value >= 5) return 'track-details-gem-mid'
+  return 'track-details-gem-low'
 }
 
 function getGemScoreFill(score) {
@@ -31,6 +29,16 @@ function getGemScoreFill(score) {
   if (value >= 7.5) return '#059669'
   if (value >= 5) return '#d97706'
   return '#dc2626'
+}
+
+function getGemScoreLabel(score) {
+  const value = Number(score) || 0
+
+  if (value >= 8.6) return 'algorithmic anomaly'
+  if (value >= 7.8) return 'hidden weapon'
+  if (value >= 6.8) return 'cult classic'
+  if (value >= 5.4) return 'slept on'
+  return 'buried'
 }
 
 function StatIcon({ kind }) {
@@ -97,6 +105,7 @@ function StatIcon({ kind }) {
 function TrackDetails({
   track,
   isPlaying,
+  isPlaybackLoading = false,
   isLiked = false,
   playlists = [],
   onToggleTrackPlayback,
@@ -105,6 +114,10 @@ function TrackDetails({
   onCreatePlaylist,
 }) {
   const [shareOpen, setShareOpen] = useState(false)
+  const gemScore = Number(track?.gemScore) || 0
+  const gemScoreText = gemScore.toFixed(1)
+  const [gemScoreWhole, gemScoreDecimal = '0'] = gemScoreText.split('.')
+  const gemScoreLabel = getGemScoreLabel(gemScore)
 
   function handleShareTrack() {
     if (!track) {
@@ -114,10 +127,10 @@ function TrackDetails({
     setShareOpen(true)
   }
 
-  const gemScorePercent = Math.max(0, Math.min((Number(track?.gemScore) || 0) * 10, 100))
+  const gemScorePercent = Math.max(0, Math.min(gemScore * 10, 100))
 
   return (
-    <aside className="track-details h-full min-h-0 overflow-y-auto border-t border-zinc-200 bg-zinc-50 xl:border-t-0">
+    <aside className="track-details h-full min-h-0 overflow-y-auto border-t border-zinc-200 bg-zinc-50 xl:overflow-hidden xl:border-t-0">
       {!track && (
         <div className="m-3 border border-zinc-300 bg-white p-5 shadow-[0_1px_1px_rgba(0,0,0,0.03)]">
           <EmptyState
@@ -128,99 +141,116 @@ function TrackDetails({
       )}
 
       {track && (
-        <div className="flex min-h-full flex-col gap-3 p-3">
-          <section className="track-details-hero relative overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-900">
-            <img
-              src={track.artworkUrl}
-              alt={track.title}
-              className="track-details-hero-image h-56 w-full object-cover opacity-95"
-              loading="lazy"
-            />
-            <div className="absolute inset-0 bg-gradient-to-t from-zinc-950/95 via-zinc-950/35 to-transparent" />
+        <div className="track-details-layout flex min-h-full flex-col p-2.5">
+          <section className="track-details-hero overflow-hidden border border-zinc-200 bg-white">
+            <div className="track-details-artwork-wrap">
+              <img
+                src={track.artworkUrl}
+                alt={track.title}
+                className="track-details-hero-image h-full w-full object-cover"
+                loading="lazy"
+              />
+              <div className="track-details-hero-scrim" />
+              <div className="track-details-hero-copy">
+                <div className="space-y-1">
+                  <p className="track-details-title">{track.title}</p>
+                  <p className="track-details-artist">{track.artist}</p>
+                  <p className="track-details-meta">
+                    {track.publishedAt?.slice(0, 4) || '2000'} / {track.genre || 'Underground'}
+                  </p>
+                </div>
 
-            <div className="absolute inset-x-0 bottom-0 p-4 text-white">
-              <p className="text-xl font-semibold leading-[1.08] tracking-tight">{track.title}</p>
-              <p className="mt-1 text-sm text-zinc-200">{track.artist}</p>
-              <div className="mt-3 flex items-center justify-between gap-3">
-                <p className="mono text-xs uppercase tracking-[0.12em] text-zinc-300">
-                  {track.publishedAt?.slice(0, 4) || '2000'} - {track.genre || 'Underground'}
-                </p>
-                <button
-                  type="button"
-                  onClick={() => onToggleTrackPlayback(track.id)}
-                  className="tooltip-anchor track-details-play-button group inline-flex items-center gap-2 rounded-lg bg-white px-3 py-2 text-sm font-semibold text-zinc-900 transition hover:bg-emerald-600 hover:text-white"
-                  data-tooltip={isPlaying ? 'Pause this track' : 'Play this track'}
-                >
-                  <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
-                    {isPlaying ? <path d="M8 6v12M16 6v12" /> : <path d="m8 6 10 6-10 6V6Z" fill="currentColor" stroke="none" />}
-                  </svg>
-                  {isPlaying ? 'Pause Track' : 'Play Track'}
-                </button>
+                <div className="track-details-play-row">
+                  <button
+                    type="button"
+                    onClick={() => onToggleTrackPlayback(track.id)}
+                    className="tooltip-anchor track-details-play-button group"
+                    data-tooltip={isPlaybackLoading ? 'Loading this track' : isPlaying ? 'Pause this track' : 'Play this track'}
+                  >
+                    {isPlaybackLoading ? (
+                      <span className="playback-loading-spinner playback-loading-spinner-sm" aria-hidden="true" />
+                    ) : (
+                      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
+                        {isPlaying ? <path d="M8 6v12M16 6v12" /> : <path d="m8 6 10 6-10 6V6Z" fill="currentColor" stroke="none" />}
+                      </svg>
+                    )}
+                    {isPlaybackLoading ? 'Loading' : isPlaying ? 'Pause' : 'Play'}
+                  </button>
+                </div>
               </div>
             </div>
-          </section>
 
-          <section className={`${DETAIL_CARD_CLASS} track-details-stats`}>
-            <div className="grid grid-cols-3 divide-x divide-zinc-200 text-center">
-              <p className="px-2 text-sm font-semibold">{compactNumber(track.views)} <span className="text-xs font-medium text-zinc-500">views</span></p>
-              <p className="px-2 text-sm font-semibold">{compactNumber(track.likes)} <span className="text-xs font-medium text-zinc-500">likes</span></p>
-              <p className="px-2 text-sm font-semibold">{compactNumber(track.comments)} <span className="text-xs font-medium text-zinc-500">comments</span></p>
+            <div className="track-details-stats">
+              <p><span>{compactNumber(track.views)}</span> views</p>
+              <p><span>{compactNumber(track.likes)}</span> likes</p>
+              <p><span>{compactNumber(track.comments)}</span> comments</p>
             </div>
           </section>
 
-          <section className={`${DETAIL_CARD_CLASS} track-details-gem`}>
-            <div className="flex items-center gap-2">
-              <StatIcon kind="gem" />
-              <p className="muted-label">Gem Score</p>
+          <section className={`track-details-gem ${getGemScoreTone(track.gemScore)}`}>
+            <div className="track-details-gem-head">
+              <div className="flex items-center gap-2">
+                <StatIcon kind="gem" />
+                <p>gem score</p>
+              </div>
+              <span>{gemScoreLabel}</span>
             </div>
-            <p className={`mt-2 text-5xl font-semibold leading-none ${getGemScoreTone(track.gemScore)}`}>{track.gemScore.toFixed(1)}</p>
-            <div className="track-details-gem-meter mt-3 h-2 overflow-hidden rounded-full bg-zinc-200">
+            <div className="track-details-gem-score">
+              <span className="track-details-gem-whole">{gemScoreWhole}</span>
+              <span className="track-details-gem-dot">.</span>
+              <span className="track-details-gem-decimal">{gemScoreDecimal}</span>
+            </div>
+            <div className="track-details-gem-meter">
               <span
-                className="track-details-gem-fill block h-full rounded-full"
+                className="track-details-gem-fill"
                 style={{ width: `${gemScorePercent}%`, backgroundColor: getGemScoreFill(track.gemScore) }}
               />
             </div>
           </section>
 
-          <div className="mt-auto space-y-2">
-            <TrackSearchLinks track={track} />
+          <TrackSearchLinks track={track} compact />
 
+          <section className="track-details-action-module">
             <PlaylistSaver
               track={track}
               playlists={playlists}
               onAddToPlaylist={onAddToPlaylist}
               onCreatePlaylist={onCreatePlaylist}
+              compact
+              variant="bare"
             />
 
-            <button
-              type="button"
-              onClick={() => {
-                if (!isLiked) {
-                  onLikeTrack(track.id)
-                }
-              }}
-              className={[
-                'tooltip-anchor track-details-save-btn group flex w-full items-center justify-center gap-2 rounded-2xl px-4 py-3 text-lg font-semibold transition',
-                isLiked
-                  ? 'border border-emerald-300 bg-emerald-50 text-emerald-700'
-                  : 'border border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-500',
-              ].join(' ')}
-              data-tooltip={isLiked ? 'Saved to liked' : 'Save this track to Liked'}
-            >
-              {isLiked ? <BsCheckLg className="h-5 w-5" /> : <BsHeartFill className="h-5 w-5" />}
-              {isLiked ? 'Saved to Liked' : 'Save to Liked'}
-            </button>
+            <div className="track-details-action-row">
+              <button
+                type="button"
+                onClick={() => {
+                  if (!isLiked) {
+                    onLikeTrack(track.id)
+                  }
+                }}
+                className={[
+                  'tooltip-anchor track-details-save-btn group',
+                  isLiked
+                    ? 'border border-emerald-300 bg-emerald-50 text-emerald-700'
+                    : 'border border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-500',
+                ].join(' ')}
+                data-tooltip={isLiked ? 'Saved to liked' : 'Save this track to Liked'}
+              >
+                {isLiked ? <BsCheckLg className="h-4 w-4" /> : <BsHeartFill className="h-4 w-4" />}
+                {isLiked ? 'Saved' : 'Save'}
+              </button>
 
-            <button
-              type="button"
-              onClick={handleShareTrack}
-              className="tooltip-anchor track-details-share-btn hover-swap flex w-full items-center justify-center gap-2 rounded-xl border border-zinc-300 bg-white px-4 py-2.5 text-sm font-semibold text-zinc-900 transition hover:border-zinc-900 hover:bg-zinc-900 hover:text-white"
-              data-tooltip="Open share options for this track"
-            >
-              <span className="hover-swap-text">Share</span>
-              <BsShareFill className="hover-swap-icon h-5 w-5" />
-            </button>
-          </div>
+              <button
+                type="button"
+                onClick={handleShareTrack}
+                className="tooltip-anchor track-details-share-btn hover-swap"
+                data-tooltip="Open share options for this track"
+              >
+                <span className="hover-swap-text">Share</span>
+                <BsShareFill className="hover-swap-icon h-4 w-4" />
+              </button>
+            </div>
+          </section>
         </div>
       )}
 

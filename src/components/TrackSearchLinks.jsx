@@ -67,6 +67,8 @@ function TrackSearchLinks({
   linkStyle,
 }) {
   const query = buildTrackSearchQuery(track)
+  const isSwipeVariant = variant === 'swipe'
+  const labelText = isSwipeVariant ? 'find elsewhere' : 'search track'
 
   if (!query) {
     return null
@@ -78,25 +80,31 @@ function TrackSearchLinks({
 
   return (
     <section
-      className={`rounded-2xl border border-zinc-200 bg-white ${compact ? 'p-2.5' : 'p-3'}`}
+      className={[
+        'track-search-links',
+        compact ? 'track-search-links-compact' : '',
+        isSwipeVariant ? 'track-search-links-swipe' : '',
+      ].filter(Boolean).join(' ')}
       style={surfaceStyle}
     >
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <p className="muted-label" style={labelStyle}>Search Track</p>
+      <div className={compact ? 'track-search-header' : 'mb-2 flex items-center justify-between gap-2'}>
+        <p className="track-search-label" style={labelStyle}>{labelText}</p>
       </div>
 
-      <div className="grid grid-cols-2 gap-2">
+      <div className="track-search-grid">
         {SEARCH_PLATFORMS.map(({ id, label, Icon, buildUrl }) => (
           <a
             key={id}
             href={buildUrl(query)}
             target="_blank"
             rel="noreferrer"
-            className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-zinc-300 px-2 text-xs font-semibold text-zinc-700 transition hover:border-sky-500 hover:bg-sky-500 hover:text-white"
+            className="track-search-link"
             style={linkStyle}
+            aria-label={`Search ${label} for this track`}
+            title={label}
           >
-            <Icon className="h-3.5 w-3.5" />
-            <span>{label}</span>
+            <Icon className="h-4 w-4" />
+            <span className="sr-only">{label}</span>
           </a>
         ))}
       </div>

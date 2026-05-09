@@ -211,6 +211,7 @@ function App() {
   const [currentTrackId, setCurrentTrackId] = useState(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [playbackCommand, setPlaybackCommand] = useState({ id: 0, trackId: null, shouldPlay: false })
+  const [playbackLoadingTrackId, setPlaybackLoadingTrackId] = useState(null)
   const [playerProgress, setPlayerProgress] = useState(0)
   const [volume, setVolume] = useState(72)
   const [playerReservedHeight, setPlayerReservedHeight] = useState(112)
@@ -469,11 +470,36 @@ function App() {
   }
 
   function requestPlaybackSync(trackId, shouldPlay) {
+    setPlaybackLoadingTrackId(trackId && shouldPlay ? trackId : null)
     setPlaybackCommand((prev) => ({
       id: prev.id + 1,
       trackId: trackId || null,
       shouldPlay: Boolean(shouldPlay),
     }))
+  }
+
+  function handlePlaybackStateChange(nextPlaying) {
+    setIsPlaying(nextPlaying)
+
+    if (!nextPlaying) {
+      setPlaybackLoadingTrackId(null)
+    }
+  }
+
+  function handlePlaybackLoadingChange(nextLoading, trackId) {
+    const resolvedTrackId = trackId || currentTrackId
+
+    setPlaybackLoadingTrackId((prevTrackId) => {
+      if (nextLoading) {
+        return resolvedTrackId || prevTrackId
+      }
+
+      if (!resolvedTrackId || prevTrackId === resolvedTrackId) {
+        return null
+      }
+
+      return prevTrackId
+    })
   }
 
   function dismissToast(toastId) {
@@ -1053,6 +1079,8 @@ function App() {
                       selectedTrackId={selectedTrackId}
                       currentTrackId={currentTrackId}
                       isPlaying={isPlaying}
+                      playbackLoadingTrackId={playbackLoadingTrackId}
+                      isDarkMode={shouldApplyChromeDarkMode}
                       playbackProgress={playerProgress}
                       likedTrackIds={likedTrackIds}
                       onLikeTrack={handleLikeTrack}
@@ -1074,6 +1102,7 @@ function App() {
                     isLoading={isLoadingTracks}
                     isDarkMode={shouldApplyChromeDarkMode}
                     isPlaying={Boolean(swipeTrack && isPlaying && currentTrackId === swipeTrack.id)}
+                    isPlaybackLoading={Boolean(swipeTrack && playbackLoadingTrackId === swipeTrack.id)}
                     isLiked={Boolean(swipeTrack && likedTrackIdSet.has(swipeTrack.id))}
                     onSave={handleSwipeSave}
                     onSkip={handleSwipeSkip}
@@ -1172,7 +1201,7 @@ function App() {
                               <img
                                 src={item.track.artworkUrl}
                                 alt={item.track.title}
-                                className="h-10 w-10 rounded-lg border border-zinc-200 object-cover"
+                                className="aspect-square h-10 w-10 rounded-lg border border-zinc-200 object-cover"
                                 loading="lazy"
                               />
 
@@ -1214,6 +1243,7 @@ function App() {
             <TrackDetails
               track={selectedTrack}
               isPlaying={isPlaying && currentTrackId === selectedTrack?.id}
+              isPlaybackLoading={Boolean(selectedTrack && playbackLoadingTrackId === selectedTrack.id)}
               onToggleTrackPlayback={handleToggleTrackPlayback}
               onLikeTrack={handleLikeTrack}
               playlists={crates}
@@ -1230,11 +1260,13 @@ function App() {
         currentTrack={currentTrack}
         queueCount={queueCount}
         isPlaying={isPlaying}
+        isPlaybackLoading={Boolean(currentTrack && playbackLoadingTrackId === currentTrack.id)}
         progress={playerProgress}
         playbackCommand={playbackCommand}
         volume={volume}
         onTogglePlay={handleTogglePlayback}
-        onPlaybackStateChange={setIsPlaying}
+        onPlaybackStateChange={handlePlaybackStateChange}
+        onPlaybackLoadingChange={handlePlaybackLoadingChange}
         canSwipeActions={Boolean(swipeTrack)}
         isSwipeTrackLiked={Boolean(swipeTrack && likedTrackIdSet.has(swipeTrack.id))}
         onSwipeSkip={handleBottomSwipeSkip}
@@ -1242,7 +1274,10 @@ function App() {
         onSwipeGem={handleBottomSwipeGem}
         onVolumeChange={setVolume}
         onProgressChange={setPlayerProgress}
-        onTrackEnd={() => setIsPlaying(false)}
+        onTrackEnd={() => {
+          setIsPlaying(false)
+          setPlaybackLoadingTrackId(null)
+        }}
         onHeightChange={setPlayerReservedHeight}
         hideSwipeActions={activeScreen === 'swipe'}
         isDarkMode={shouldApplyChromeDarkMode}

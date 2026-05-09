@@ -6,6 +6,8 @@ function TrackTable({
   isLoading,
   currentTrackId,
   isPlaying,
+  playbackLoadingTrackId,
+  isDarkMode = false,
   likedTrackIds = [],
   onLikeTrack,
   onRemoveFromLiked,
@@ -40,22 +42,24 @@ function TrackTable({
   }
 
   return (
-    <section className="panel min-h-0 overflow-visible rounded-xl shadow-sm">
+    <section className="panel min-h-0 overflow-visible shadow-sm">
       <div className="overflow-visible">
         <div className="w-full">
-          <div className="track-table-grid grid border-b border-zinc-200 bg-zinc-50 px-3 py-2.5 text-xs font-semibold uppercase tracking-[0.08em] text-zinc-500">
+          <div className="track-table-grid grid border-b border-zinc-200/30 bg-zinc-50 px-3 py-2.5 text-[11px] font-medium text-zinc-500">
             <span>Track</span>
-            <span className="hidden text-zinc-400 md:block">Artist</span>
-            <span className="text-zinc-400">Views</span>
+            <span className="hidden md:block">Artist</span>
+            <span>Views</span>
             <span className="justify-self-end">Gem</span>
             <span className="justify-self-end">Actions</span>
           </div>
-          <div className="divide-y divide-zinc-200">
+          <div className="divide-y divide-zinc-200/30">
             {tracks.map((track) => (
               <TrackRow
                 key={track.id}
                 track={track}
                 isPlaying={isPlaying && currentTrackId === track.id}
+                isPlaybackLoading={playbackLoadingTrackId === track.id}
+                isDarkMode={isDarkMode}
                 isLiked={likedTrackIdSet.has(track.id)}
                 onLikeTrack={onLikeTrack}
                 onRemoveFromLiked={onRemoveFromLiked}

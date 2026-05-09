@@ -134,6 +134,14 @@ function configureYouTubeIframe(player) {
   }
 }
 
+function getLoadedYouTubeVideoId(player) {
+  try {
+    return String(player?.getVideoData?.()?.video_id || '').trim()
+  } catch {
+    return ''
+  }
+}
+
 function PlayIcon({ className = 'h-4 w-4' }) {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" className={className} fill="currentColor">
@@ -175,11 +183,13 @@ function BottomPlayer({
   currentTrack,
   queueCount,
   isPlaying,
+  isPlaybackLoading = false,
   progress,
   playbackCommand = null,
   volume,
   onTogglePlay,
   onPlaybackStateChange,
+  onPlaybackLoadingChange,
   canSwipeActions,
   isSwipeTrackLiked = false,
   onSwipeSkip,
@@ -198,6 +208,8 @@ function BottomPlayer({
   const audioHostRef = useRef(null)
   const footerRef = useRef(null)
   const playerRef = useRef(null)
+  const isMountedRef = useRef(true)
+  const isPlayerCreationPendingRef = useRef(false)
   const progressIntervalRef = useRef(null)
   const loadedVideoIdRef = useRef('')
   const progressValueRef = useRef(0)
@@ -207,6 +219,10 @@ function BottomPlayer({
   const scrubPercentRef = useRef(null)
   const playSyncTimersRef = useRef([])
   const volumeRef = useRef(clampPercent(volume))
+  const onPlaybackStateChangeRef = useRef(onPlaybackStateChange)
+  const onPlaybackLoadingChangeRef = useRef(onPlaybackLoadingChange)
+  const onProgressChangeRef = useRef(onProgressChange)
+  const onTrackEndRef = useRef(onTrackEnd)
   const currentTrackIdRef = useRef(currentTrack?.id || null)
   const currentVideoIdRef = useRef(currentTrack?.youtubeVideoId || '')
   const trackDurationSeconds = getTrackDurationSeconds(currentTrack)
@@ -216,6 +232,42 @@ function BottomPlayer({
     playSyncTimersRef.current = []
   }, [])
 
+  const setPlaybackLoading = useCallback((nextLoading, trackId = currentTrackIdRef.current) => {
+    onPlaybackLoadingChangeRef.current?.(Boolean(nextLoading), trackId || null)
+  }, [])
+
+  const ensureRequestedVideoLoaded = useCallback((videoId, { shouldPlay = isPlayingRef.current } = {}) => {
+    const player = playerRef.current
+
+    if (!player || !videoId) {
+      return false
+    }
+
+    const playerVideoId = getLoadedYouTubeVideoId(player)
+    const needsVideoLoad =
+      loadedVideoIdRef.current !== videoId ||
+      (playerVideoId && playerVideoId !== videoId)
+
+    if (!needsVideoLoad) {
+      return false
+    }
+
+    if (shouldPlay) {
+      player.loadVideoById(videoId)
+      setPlaybackLoading(true)
+    } else {
+      player.cueVideoById(videoId)
+      setPlaybackLoading(false)
+    }
+
+    loadedVideoIdRef.current = videoId
+    progressValueRef.current = 0
+    fallbackTickRef.current = performance.now()
+    onProgressChange?.(0)
+
+    return true
+  }, [onProgressChange, setPlaybackLoading])
+
   const syncYouTubePlayback = useCallback(({ videoId = currentVideoIdRef.current, shouldPlay = isPlayingRef.current, force = false } = {}) => {
     const player = playerRef.current
 
@@ -224,26 +276,12 @@ function BottomPlayer({
     }
 
     try {
-      let loadedNextVideo = false
-
       player.setVolume?.(volumeRef.current)
       if (shouldPlay && volumeRef.current > 0) {
         player.unMute?.()
       }
 
-      if (loadedVideoIdRef.current !== videoId) {
-        if (shouldPlay) {
-          player.loadVideoById(videoId)
-          loadedNextVideo = true
-        } else {
-          player.cueVideoById(videoId)
-        }
-
-        loadedVideoIdRef.current = videoId
-        progressValueRef.current = 0
-        fallbackTickRef.current = performance.now()
-        onProgressChange?.(0)
-      }
+      const loadedNextVideo = ensureRequestedVideoLoaded(videoId, { shouldPlay })
 
       const playerState = Number(player.getPlayerState?.())
       const playerStates = window.YT?.PlayerState || {}
@@ -261,7 +299,7 @@ function BottomPlayer({
     } catch {
       // The IFrame API can throw while a video is still loading. Retries handle that path.
     }
-  }, [isPlayerReady, onProgressChange])
+  }, [ensureRequestedVideoLoaded, isPlayerReady])
 
   const scheduleDirectPlayRetries = useCallback((videoId = currentVideoIdRef.current) => {
     if (!videoId) {
@@ -275,9 +313,16 @@ function BottomPlayer({
         }
 
         try {
-          playerRef.current?.unMute?.()
-          playerRef.current?.setVolume?.(volumeRef.current)
-          playerRef.current?.playVideo?.()
+          const player = playerRef.current
+
+          if (!player) {
+            return
+          }
+
+          ensureRequestedVideoLoaded(videoId, { shouldPlay: true })
+          player.unMute?.()
+          player.setVolume?.(volumeRef.current)
+          player.playVideo?.()
         } catch {
           // The IFrame API can throw while a video is still loading. Retries handle that path.
         }
@@ -285,7 +330,7 @@ function BottomPlayer({
 
       playSyncTimersRef.current.push(timerId)
     })
-  }, [])
+  }, [ensureRequestedVideoLoaded])
 
   const schedulePlaybackSync = useCallback(({ videoId = currentVideoIdRef.current, shouldPlay = isPlayingRef.current } = {}) => {
     clearPlaySyncTimers()
@@ -354,7 +399,11 @@ function BottomPlayer({
   }, [currentTrack?.id, onHeightChange])
 
   useEffect(() => {
+    isMountedRef.current = true
+
     return () => {
+      isMountedRef.current = false
+      isPlayerCreationPendingRef.current = false
       clearPlaySyncTimers()
 
       if (progressIntervalRef.current) {
@@ -371,6 +420,22 @@ function BottomPlayer({
   useEffect(() => {
     progressValueRef.current = clampPercent(progress)
   }, [progress])
+
+  useEffect(() => {
+    onPlaybackStateChangeRef.current = onPlaybackStateChange
+  }, [onPlaybackStateChange])
+
+  useEffect(() => {
+    onPlaybackLoadingChangeRef.current = onPlaybackLoadingChange
+  }, [onPlaybackLoadingChange])
+
+  useEffect(() => {
+    onProgressChangeRef.current = onProgressChange
+  }, [onProgressChange])
+
+  useEffect(() => {
+    onTrackEndRef.current = onTrackEnd
+  }, [onTrackEnd])
 
   useEffect(() => {
     const nextTrackId = currentTrack?.id || null
@@ -420,6 +485,7 @@ function BottomPlayer({
     progressValueRef.current = 0
     fallbackTickRef.current = 0
     isPlayingRef.current = false
+    setPlaybackLoading(false)
     onProgressChange?.(0)
     onPlaybackStateChange?.(false)
 
@@ -428,25 +494,32 @@ function BottomPlayer({
     } catch {
       // Ignore occasional transient YouTube API errors.
     }
-  }, [clearPlaySyncTimers, currentTrack?.youtubeVideoId, onPlaybackStateChange, onProgressChange])
+  }, [clearPlaySyncTimers, currentTrack?.youtubeVideoId, onPlaybackStateChange, onProgressChange, setPlaybackLoading])
 
   useEffect(() => {
-    if (!currentTrack?.youtubeVideoId || playerRef.current || !audioHostRef.current) {
+    if (
+      !currentTrack?.youtubeVideoId ||
+      playerRef.current ||
+      isPlayerCreationPendingRef.current ||
+      !audioHostRef.current
+    ) {
       return undefined
     }
 
-    let isDisposed = false
+    const initialVideoId = currentTrack.youtubeVideoId
+    isPlayerCreationPendingRef.current = true
 
     loadYouTubeIframeApi()
       .then((YT) => {
-        if (isDisposed || !audioHostRef.current) {
+        if (!isMountedRef.current || !audioHostRef.current || playerRef.current) {
+          isPlayerCreationPendingRef.current = false
           return
         }
 
         playerRef.current = new YT.Player(audioHostRef.current, {
           height: '200',
           width: '200',
-          videoId: currentTrack.youtubeVideoId,
+          videoId: initialVideoId,
           playerVars: {
             autoplay: 0,
             controls: 0,
@@ -457,27 +530,21 @@ function BottomPlayer({
           },
           events: {
             onReady: () => {
-              if (isDisposed) {
+              if (!isMountedRef.current) {
                 return
               }
 
+              isPlayerCreationPendingRef.current = false
               setIsPlayerReady(true)
               configureYouTubeIframe(playerRef.current)
-              loadedVideoIdRef.current = currentTrack.youtubeVideoId
+              loadedVideoIdRef.current = getLoadedYouTubeVideoId(playerRef.current) || initialVideoId
               try {
-                const readyVideoId = currentVideoIdRef.current || currentTrack.youtubeVideoId
+                const readyVideoId = currentVideoIdRef.current || initialVideoId
 
                 playerRef.current?.setVolume(volumeRef.current)
-                if (readyVideoId && readyVideoId !== currentTrack.youtubeVideoId) {
-                  if (isPlayingRef.current) {
-                    playerRef.current?.loadVideoById(readyVideoId)
-                  } else {
-                    playerRef.current?.cueVideoById(readyVideoId)
-                  }
-                  loadedVideoIdRef.current = readyVideoId
-                  progressValueRef.current = 0
-                  onProgressChange?.(0)
-                } else if (isPlayingRef.current) {
+                ensureRequestedVideoLoaded(readyVideoId, { shouldPlay: isPlayingRef.current })
+
+                if (isPlayingRef.current) {
                   playerRef.current?.playVideo()
                 }
 
@@ -496,6 +563,7 @@ function BottomPlayer({
               }
 
               if (event.data === playerStates.PLAYING && !isPlayingRef.current) {
+                setPlaybackLoading(false)
                 try {
                   playerRef.current?.pauseVideo()
                 } catch {
@@ -505,11 +573,15 @@ function BottomPlayer({
               }
 
               if (event.data === playerStates.PLAYING) {
+                setPlaybackLoading(false)
                 fallbackTickRef.current = performance.now()
                 return
               }
 
               if (event.data === playerStates.BUFFERING) {
+                if (isPlayingRef.current) {
+                  setPlaybackLoading(true)
+                }
                 fallbackTickRef.current = performance.now()
                 return
               }
@@ -517,6 +589,7 @@ function BottomPlayer({
               if (event.data === playerStates.CUED) {
                 fallbackTickRef.current = performance.now()
                 if (isPlayingRef.current) {
+                  setPlaybackLoading(true)
                   try {
                     playerRef.current?.playVideo()
                   } catch {
@@ -530,7 +603,10 @@ function BottomPlayer({
               if (event.data === playerStates.PAUSED) {
                 fallbackTickRef.current = performance.now()
                 if (isPlayingRef.current) {
+                  setPlaybackLoading(true)
                   scheduleDirectPlayRetries()
+                } else {
+                  setPlaybackLoading(false)
                 }
                 return
               }
@@ -538,23 +614,23 @@ function BottomPlayer({
               if (event.data === playerStates.ENDED) {
                 clearPlaySyncTimers()
                 isPlayingRef.current = false
+                setPlaybackLoading(false)
                 progressValueRef.current = 100
-                onProgressChange?.(100)
-                onPlaybackStateChange?.(false)
-                onTrackEnd?.()
+                onProgressChangeRef.current?.(100)
+                onPlaybackStateChangeRef.current?.(false)
+                onTrackEndRef.current?.()
               }
             },
           },
         })
       })
       .catch(() => {
-        setIsPlayerReady(false)
+        isPlayerCreationPendingRef.current = false
+        if (isMountedRef.current) {
+          setIsPlayerReady(false)
+        }
       })
-
-    return () => {
-      isDisposed = true
-    }
-  }, [clearPlaySyncTimers, currentTrack?.youtubeVideoId, onPlaybackStateChange, onProgressChange, onTrackEnd, scheduleDirectPlayRetries])
+  }, [clearPlaySyncTimers, currentTrack?.youtubeVideoId, ensureRequestedVideoLoaded, scheduleDirectPlayRetries, setPlaybackLoading])
 
   useEffect(() => {
     const commandAppliesToTrack =
@@ -567,6 +643,7 @@ function BottomPlayer({
     const videoId = currentTrack?.youtubeVideoId || ''
 
     isPlayingRef.current = desiredShouldPlay
+    setPlaybackLoading(Boolean(desiredShouldPlay && videoId), currentTrack?.id || null)
 
     if (!isPlayerReady || !playerRef.current || !videoId) {
       return
@@ -583,6 +660,7 @@ function BottomPlayer({
     currentTrack?.youtubeVideoId,
     isPlayerReady,
     isPlaying,
+    setPlaybackLoading,
     playbackCommand?.id,
     playbackCommand?.shouldPlay,
     playbackCommand?.trackId,
@@ -654,6 +732,12 @@ function BottomPlayer({
         const playerState = Number(playerRef.current?.getPlayerState?.())
         const duration = Number(playerRef.current?.getDuration?.() || 0)
         const currentTime = Number(playerRef.current?.getCurrentTime?.() || 0)
+        const loadedPlayerVideoId = getLoadedYouTubeVideoId(playerRef.current)
+        const playerVideoMismatch = Boolean(
+          currentVideoIdRef.current &&
+          loadedPlayerVideoId &&
+          loadedPlayerVideoId !== currentVideoIdRef.current,
+        )
         const playerTimelineActive =
           playerState === playerStates.PLAYING ||
           playerState === playerStates.BUFFERING
@@ -661,8 +745,9 @@ function BottomPlayer({
         if (
           isPlayingRef.current &&
           playerRef.current &&
-          !playerTimelineActive
+          (!playerTimelineActive || playerVideoMismatch)
         ) {
+          ensureRequestedVideoLoaded(currentVideoIdRef.current, { shouldPlay: true })
           playerRef.current.unMute?.()
           playerRef.current.setVolume?.(volumeRef.current)
           playerRef.current.playVideo?.()
@@ -671,6 +756,7 @@ function BottomPlayer({
         if (duration > 0 && currentTime >= 0) {
           if (playerTimelineActive) {
             usedPlayerTimeline = true
+            setPlaybackLoading(false)
             const quantizedSeconds = Math.floor(currentTime)
             nextPercent = Math.min((quantizedSeconds / duration) * 100, 100)
           } else {
@@ -705,7 +791,7 @@ function BottomPlayer({
         progressIntervalRef.current = null
       }
     }
-  }, [currentTrack?.youtubeVideoId, isPlayerReady, isPlaying, onProgressChange, onTrackEnd, trackDurationSeconds])
+  }, [currentTrack?.youtubeVideoId, ensureRequestedVideoLoaded, isPlayerReady, isPlaying, onProgressChange, onTrackEnd, setPlaybackLoading, trackDurationSeconds])
 
   useEffect(() => {
     if (!isPlayerReady || !playerRef.current) {
@@ -938,7 +1024,7 @@ function BottomPlayer({
           <img
             src={currentTrack.artworkUrl}
             alt={currentTrack.title}
-            className={`h-10 w-10 rounded-lg border object-cover ${isDarkMode ? 'border-white/60' : 'border-zinc-300'}`}
+            className={`aspect-square h-10 w-10 rounded-lg border object-cover ${isDarkMode ? 'border-white/60' : 'border-zinc-300'}`}
             loading="lazy"
           />
           <div className="min-w-0">
@@ -976,10 +1062,16 @@ function BottomPlayer({
                   ? 'border-white/60 bg-black text-white hover:bg-zinc-900'
                   : 'border-zinc-900 bg-zinc-900 text-white hover:bg-zinc-700',
               ].join(' ')}
-              aria-label={isPlaying ? 'Pause' : 'Play'}
-              data-tooltip={isPlaying ? 'Pause playback' : 'Play track'}
+              aria-label={isPlaybackLoading ? 'Loading track' : isPlaying ? 'Pause' : 'Play'}
+              data-tooltip={isPlaybackLoading ? 'Loading track' : isPlaying ? 'Pause playback' : 'Play track'}
             >
-              {isPlaying ? <PauseIcon /> : <PlayIcon />}
+              {isPlaybackLoading ? (
+                <span className="playback-loading-spinner playback-loading-spinner-sm" aria-hidden="true" />
+              ) : isPlaying ? (
+                <PauseIcon />
+              ) : (
+                <PlayIcon />
+              )}
             </button>
             {!hideSwipeActions && (
               <button

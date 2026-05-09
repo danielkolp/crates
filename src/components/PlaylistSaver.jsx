@@ -7,6 +7,7 @@ function PlaylistSaver({
   onAddToPlaylist,
   onCreatePlaylist,
   compact = false,
+  variant = 'panel',
   surfaceStyle,
   labelStyle,
   controlStyle,
@@ -78,12 +79,26 @@ function PlaylistSaver({
     setIsCreating(false)
   }
 
+  const isBare = variant === 'bare'
+  const sectionClassName = isBare
+    ? 'playlist-saver-bare'
+    : `rounded-2xl border border-zinc-200 bg-white ${compact ? 'p-2.5' : 'p-3'}`
+  const controlClassName = compact ? 'input-select h-8 text-xs' : 'input-select h-9 text-sm'
+  const addButtonClassName = [
+    'inline-flex items-center justify-center gap-1 rounded-lg border font-semibold transition hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50',
+    compact ? 'h-8 min-w-[4.75rem] px-2 text-xs' : 'h-9 min-w-[5.75rem] px-3 text-sm',
+  ].join(' ')
+  const createButtonClassName = [
+    'rounded-lg border font-semibold transition hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50',
+    compact ? 'h-8 min-w-[6.25rem] px-2 text-xs' : 'h-9 min-w-[7.5rem] px-3 text-sm',
+  ].join(' ')
+
   return (
     <section
-      className={`rounded-2xl border border-zinc-200 bg-white ${compact ? 'p-2.5' : 'p-3'}`}
+      className={sectionClassName}
       style={surfaceStyle}
     >
-      <div className="mb-2 flex items-center justify-between gap-2">
+      <div className={`${compact ? 'mb-1.5' : 'mb-2'} flex items-center justify-between gap-2`}>
         <div className="flex items-center gap-2">
           <BsMusicNoteList className="h-4 w-4" style={labelStyle} />
           <p className="muted-label" style={labelStyle}>Playlist</p>
@@ -106,7 +121,7 @@ function PlaylistSaver({
           <select
             value={resolvedPlaylistId}
             onChange={(event) => setSelectedPlaylistId(event.target.value)}
-            className="input-select h-9 text-sm"
+            className={controlClassName}
             style={controlStyle}
           >
             {playlists.map((playlist) => (
@@ -120,7 +135,7 @@ function PlaylistSaver({
             type="button"
             onClick={addToSelectedPlaylist}
             disabled={!canAdd}
-            className="inline-flex h-9 min-w-[5.75rem] items-center justify-center gap-1 rounded-lg border px-3 text-sm font-semibold transition hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50"
+            className={addButtonClassName}
             style={isAlreadySaved ? savedButtonStyle : primaryButtonStyle}
           >
             {isAlreadySaved && <BsCheckLg className="h-3.5 w-3.5" />}
@@ -135,14 +150,14 @@ function PlaylistSaver({
             value={playlistName}
             onChange={(event) => setPlaylistName(event.target.value)}
             placeholder="Playlist name"
-            className="h-9 rounded-lg border px-3 text-sm outline-none transition focus:opacity-90"
+            className={`${compact ? 'h-8 text-xs' : 'h-9 text-sm'} rounded-lg border px-3 outline-none transition focus:opacity-90`}
             style={controlStyle}
           />
 
           <button
             type="submit"
             disabled={!canCreate}
-            className="h-9 min-w-[7.5rem] rounded-lg border px-3 text-sm font-semibold transition hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50"
+            className={createButtonClassName}
             style={primaryButtonStyle}
           >
             Create & add

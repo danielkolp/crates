@@ -126,7 +126,7 @@ function TrackCollectionView({
                 <img
                   src={track.artworkUrl}
                   alt={track.title}
-                  className="h-12 w-12 rounded-lg border border-zinc-200 object-cover"
+                  className="aspect-square h-12 w-12 rounded-lg border border-zinc-200 object-cover"
                 />
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold">{track.title}</p>
