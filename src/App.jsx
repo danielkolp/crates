@@ -76,6 +76,7 @@ const DEFAULT_SEARCH_STATUS = {
   message: 'Ready for live YouTube search.',
 }
 
+const LAZY_DISCOVERY_REMAINING_THRESHOLD = 6
 const TOAST_EXIT_MS = 220
 
 function slugifyPlaylistName(value) {
@@ -185,6 +186,32 @@ function getHistoryActionClass(action) {
   return 'border-zinc-300 bg-zinc-50 text-zinc-700'
 }
 
+function mergeUniqueTracks(existingTracks = [], incomingTracks = []) {
+  const seenTrackIds = new Set(existingTracks.map((track) => track.id))
+  const nextTracks = [...existingTracks]
+
+  incomingTracks.forEach((track) => {
+    if (!track?.id || seenTrackIds.has(track.id)) {
+      return
+    }
+
+    seenTrackIds.add(track.id)
+    nextTracks.push(track)
+  })
+
+  return nextTracks
+}
+
+function addTracksToCatalog(catalog, tracks = []) {
+  const nextCatalog = { ...catalog }
+
+  tracks.forEach((track) => {
+    nextCatalog[track.id] = track
+  })
+
+  return nextCatalog
+}
+
 function App() {
   const location = useLocation()
   const navigate = useNavigate()
@@ -226,6 +253,14 @@ function App() {
   const [toasts, setToasts] = useState([])
 
   const autoplayNextSwipeRef = useRef(false)
+  const discoverySessionRef = useRef({
+    seedKey: '',
+    discoverySeed: null,
+    searchFilters: null,
+    nextQueueIndex: 1,
+    exhausted: true,
+    isExpanding: false,
+  })
   const toastTimersRef = useRef(new Map())
 
   const filteredTracks = allTracks
@@ -356,12 +391,23 @@ function App() {
             refreshKey: searchRefreshKey,
           })
           const discoverySeed = createDiscoverySeed(searchFilters)
+          const seedKey = normalizeNumericSeed(discoverySeed)
+          const nextDiscoverySession = {
+            seedKey,
+            discoverySeed,
+            searchFilters,
+            nextQueueIndex: 1,
+            exhausted: (discoverySeed.queryPlan?.length || 0) <= 1,
+            isExpanding: false,
+          }
 
           const tracks = await searchTracks(
             '',
             {
               ...searchFilters,
               discoverySeed,
+              discoveryQueueIndex: 0,
+              discoveryLoadReason: 'initial',
             },
           )
 
@@ -369,18 +415,11 @@ function App() {
             return
           }
 
-          setCurrentDiscoverySeed(normalizeNumericSeed(discoverySeed))
+          discoverySessionRef.current = nextDiscoverySession
+          setCurrentDiscoverySeed(seedKey)
           setAllTracks(tracks)
 
-          setTrackCatalog((prevCatalog) => {
-            const nextCatalog = { ...prevCatalog }
-
-            tracks.forEach((track) => {
-              nextCatalog[track.id] = track
-            })
-
-            return nextCatalog
-          })
+          setTrackCatalog((prevCatalog) => addTracksToCatalog(prevCatalog, tracks))
 
           setSelectedTrackId((prev) =>
             prev && tracks.some((track) => track.id === prev) ? prev : tracks[0]?.id ?? null,
@@ -396,6 +435,14 @@ function App() {
           console.error('[CrateDigger][app] search failed', error)
 
           if (!isCancelled) {
+            discoverySessionRef.current = {
+              seedKey: '',
+              discoverySeed: null,
+              searchFilters: null,
+              nextQueueIndex: 1,
+              exhausted: true,
+              isExpanding: false,
+            }
             setAllTracks([])
             setSelectedTrackId(null)
             setCurrentTrackId(null)
@@ -906,6 +953,75 @@ function App() {
     setSearchRefreshKey((prev) => prev + 1)
   }
 
+  async function loadMoreDiscoveryTracks() {
+    const session = discoverySessionRef.current
+
+    if (
+      isDemoMode ||
+      session.isExpanding ||
+      session.exhausted ||
+      !session.discoverySeed ||
+      !session.searchFilters
+    ) {
+      return
+    }
+
+    const queueIndex = session.nextQueueIndex
+
+    session.isExpanding = true
+
+    try {
+      const tracks = await searchTracks(
+        '',
+        {
+          ...session.searchFilters,
+          discoverySeed: session.discoverySeed,
+          discoveryQueueIndex: queueIndex,
+          discoveryLoadReason: 'lazy',
+        },
+      )
+
+      const latestSession = discoverySessionRef.current
+
+      if (latestSession.seedKey !== session.seedKey) {
+        return
+      }
+
+      const latestSearchStatus = getLastSearchStatus()
+
+      if (latestSearchStatus.isQuotaExceeded) {
+        setSearchStatus(latestSearchStatus)
+        return
+      }
+
+      latestSession.nextQueueIndex = queueIndex + 1
+      latestSession.exhausted = latestSession.nextQueueIndex >= (latestSession.discoverySeed.queryPlan?.length || 0)
+
+      if (tracks.length > 0) {
+        setAllTracks((prevTracks) => mergeUniqueTracks(prevTracks, tracks))
+        setTrackCatalog((prevCatalog) => addTracksToCatalog(prevCatalog, tracks))
+      }
+
+      setSearchStatus(latestSearchStatus)
+    } catch (error) {
+      console.error('[CrateDigger][app] lazy discovery expansion failed', error)
+
+      setSearchStatus({
+        source: 'youtube',
+        usedFallback: false,
+        isQuotaExceeded: Boolean(error?.isDailyQuotaExceeded || error?.quotaReason),
+        errorReason: error?.quotaReason || error?.reason,
+        message: 'Search failed. Check your YouTube API key or quota.',
+      })
+    } finally {
+      const latestSession = discoverySessionRef.current
+
+      if (latestSession.seedKey === session.seedKey) {
+        latestSession.isExpanding = false
+      }
+    }
+  }
+
   function handleSwipeAdvance({ forcePlaybackAdvance = false } = {}) {
     const currentSwipeTrack = swipeTrack
 
@@ -916,22 +1032,29 @@ function App() {
     const nextSwiped = new Set(swipedTrackIds)
     nextSwiped.add(currentSwipeTrack.id)
     const nextTrack = swipeQueue.find((track) => !nextSwiped.has(track.id))
+    const nextSwipedTrackIds = Array.from(nextSwiped)
+    const nextRemainingCount = Math.max(swipeQueue.length - nextSwiped.size, 0)
 
     const hasConsumedSwipeBatch = swipeQueue.length > 0 && nextSwiped.size >= swipeQueue.length
 
     if (hasConsumedSwipeBatch) {
       autoplayNextSwipeRef.current = true
-      setSwipedTrackIds([])
 
       if (!isDemoMode) {
-        setIsLoadingTracks(true)
-        setSearchRefreshKey((prev) => prev + 1)
+        setSwipedTrackIds(nextSwipedTrackIds)
+        void loadMoreDiscoveryTracks()
+        return
       }
 
+      setSwipedTrackIds([])
       return
     }
 
-    setSwipedTrackIds(Array.from(nextSwiped))
+    setSwipedTrackIds(nextSwipedTrackIds)
+
+    if (!isDemoMode && nextRemainingCount < LAZY_DISCOVERY_REMAINING_THRESHOLD) {
+      void loadMoreDiscoveryTracks()
+    }
 
     if (nextTrack && (activeScreen === 'swipe' || forcePlaybackAdvance)) {
       setPlayerProgress(0)

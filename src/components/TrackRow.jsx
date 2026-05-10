@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { BsCheckLg, BsHeartFill, BsPauseFill, BsPlayFill, BsShareFill } from 'react-icons/bs'
 import ShareModal from './ShareModal'
-import { toRgba, useArtworkTheme } from '../hooks/useArtworkTheme'
+import { getArtworkCandidates } from '../hooks/useArtworkTheme'
 import { getTrackSharePayload } from '../utils/share'
 
 const TRAILING_WRAPPED_META_PATTERN =
@@ -149,7 +149,6 @@ function TrackRow({
   track,
   isPlaying,
   isPlaybackLoading = false,
-  isDarkMode = false,
   isLiked = false,
   onLikeTrack,
   onRemoveFromLiked,
@@ -157,21 +156,22 @@ function TrackRow({
 }) {
   const [shareOpen, setShareOpen] = useState(false)
   const titleParts = splitTrackTitle(track.title)
-  const { artworkSrc, dynamicTheme, handleArtworkError } = useArtworkTheme(track.artworkUrl, { isDarkMode })
-  const themedRowText = isDarkMode ? dynamicTheme?.textColor : 'rgb(24, 24, 27)'
-  const themedRowMuted = isDarkMode ? toRgba(dynamicTheme?.textColor, 0.66) : 'rgba(113, 113, 122, 0.78)'
-  const themedControlText = isDarkMode ? dynamicTheme?.textColor : dynamicTheme?.mainColor
-  const rowThemeStyle = dynamicTheme
-    ? {
-        '--track-row-bg': `linear-gradient(90deg, ${toRgba(dynamicTheme.cardColor, isPlaying ? 0.48 : 0.28)} 0%, ${toRgba(dynamicTheme.mainColor, isPlaying ? 0.34 : 0.18)} 48%, transparent 100%)`,
-        '--track-row-hover-bg': `linear-gradient(90deg, ${toRgba(dynamicTheme.cardColor, 0.4)} 0%, ${toRgba(dynamicTheme.mainColor, 0.26)} 52%, transparent 100%)`,
-        '--track-row-text': themedRowText,
-        '--track-row-muted': themedRowMuted,
-        '--track-row-control-bg': toRgba(themedControlText, 0.1),
-        '--track-row-control-border': toRgba(themedControlText, 0.24),
-        '--track-row-control-text': themedControlText,
-      }
-    : undefined
+  const [artworkFallback, setArtworkFallback] = useState({ key: '', index: 0 })
+  const artworkCandidates = useMemo(() => getArtworkCandidates(track.artworkUrl), [track.artworkUrl])
+  const artworkKey = track.artworkUrl || ''
+  const artworkCandidateIndex = artworkFallback.key === artworkKey ? artworkFallback.index : 0
+  const artworkSrc = artworkCandidates[artworkCandidateIndex] || track.artworkUrl
+
+  function handleArtworkError() {
+    if (!artworkKey || artworkCandidateIndex >= artworkCandidates.length - 1) {
+      return
+    }
+
+    setArtworkFallback({
+      key: artworkKey,
+      index: artworkCandidateIndex + 1,
+    })
+  }
 
   function handleShareTrack(event) {
     event.stopPropagation()
@@ -183,10 +183,8 @@ function TrackRow({
       <div
         className={[
           'track-row track-table-grid grid w-full px-3 py-4 text-left transition',
-          dynamicTheme ? 'track-row-themed' : '',
           isPlaying ? 'track-row-playing' : '',
         ].join(' ')}
-        style={rowThemeStyle}
       >
         <div className="flex min-w-0 items-center gap-3">
           <img
@@ -204,9 +202,9 @@ function TrackRow({
               onPlay()
             }}
             className={[
-              'tooltip-anchor track-row-control group grid h-8 w-8 shrink-0 place-items-center rounded-full border text-xs transition',
+              'tooltip-anchor track-row-control track-row-play-button group grid h-8 w-8 shrink-0 place-items-center rounded-full border text-xs transition',
               isPlaying || isPlaybackLoading
-                ? 'border-zinc-900 bg-zinc-900 text-white'
+                ? 'track-row-control-active border-zinc-900 bg-zinc-900 text-white'
                 : 'border-zinc-200 bg-white text-zinc-500 hover:border-zinc-400 hover:text-zinc-900',
             ].join(' ')}
             aria-label={isPlaybackLoading ? `Loading ${track.title}` : isPlaying ? `Pause ${track.title}` : `Play ${track.title}`}
@@ -257,9 +255,9 @@ function TrackRow({
               onLikeTrack(track.id)
             }}
             className={[
-              'tooltip-anchor track-row-control grid h-8 w-8 place-items-center rounded-full border text-xs transition',
+              'tooltip-anchor track-row-control track-row-like-button grid h-8 w-8 place-items-center rounded-full border text-xs transition',
               isLiked
-                ? 'border-zinc-300 bg-zinc-100 text-zinc-900'
+                ? 'track-row-control-active border-zinc-300 bg-zinc-100 text-zinc-900'
                 : 'border-zinc-200 bg-white text-zinc-400 hover:border-zinc-400 hover:text-zinc-900',
             ].join(' ')}
             aria-label={isLiked ? `Remove ${track.title} from liked` : `Save ${track.title} to liked`}
@@ -271,7 +269,7 @@ function TrackRow({
           <button
             type="button"
             onClick={handleShareTrack}
-            className="tooltip-anchor track-row-control grid h-8 w-8 place-items-center rounded-full border border-zinc-200 bg-white text-zinc-400 transition hover:border-zinc-400 hover:text-zinc-900"
+            className="tooltip-anchor track-row-control track-row-share-button grid h-8 w-8 place-items-center rounded-full border border-zinc-200 bg-white text-zinc-400 transition hover:border-zinc-400 hover:text-zinc-900"
             aria-label={`Share ${track.title}`}
             data-tooltip="Share track"
           >

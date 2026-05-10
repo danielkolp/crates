@@ -13,8 +13,17 @@ import {
   isLikelyShort,
 } from '../utils/filterTracks'
 
-const searchCache = new Map()
 const DEV = import.meta.env.DEV
+const QUOTA_DEBUG = DEV || import.meta.env.VITE_YOUTUBE_QUOTA_DEBUG === 'true'
+
+const searchCache = new Map()
+const searchResultCache = new Map()
+const videoDetailsCache = new Map()
+const videoBatchCache = new Map()
+const channelMetadataCache = new Map()
+const channelBatchCache = new Map()
+const playlistItemsCache = new Map()
+const requestInFlightCache = new Map()
 
 const YOUTUBE_DAILY_QUOTA_REASONS = new Set([
   'quotaExceeded',
@@ -25,9 +34,37 @@ const YOUTUBE_DAILY_QUOTA_REASONS = new Set([
 const SEED_QUERY_COUNT = 6
 const YOUTUBE_RESULTS_PER_QUERY = 12
 const YOUTUBE_VIDEO_DETAILS_BATCH_SIZE = 50
+const YOUTUBE_CHANNEL_DETAILS_BATCH_SIZE = 50
+const YOUTUBE_DISCOVERY_MAX_VIDEO_IDS = SEED_QUERY_COUNT * YOUTUBE_RESULTS_PER_QUERY
+const YOUTUBE_CHANNEL_EXPANSION_LIMIT = 6
+const YOUTUBE_UPLOADS_PER_CHANNEL = 8
+const PREVIOUS_EAGER_SEARCH_LIST_COUNT = SEED_QUERY_COUNT
 const DEFAULT_NUMERIC_SEED = '10000000'
 const DISCOVERY_YEAR_START = 2012
 const DISCOVERY_YEAR_END = 2026
+
+const YOUTUBE_QUOTA_COSTS = {
+  search: 100,
+  videos: 1,
+  channels: 1,
+  playlistItems: 1,
+}
+
+const TRACK_RESULT_CACHE_TTL_MS = 30 * 60 * 1000
+const SEARCH_RESULT_CACHE_TTL_MS = 6 * 60 * 60 * 1000
+const VIDEO_DETAILS_CACHE_TTL_MS = 12 * 60 * 60 * 1000
+const CHANNEL_METADATA_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000
+const PLAYLIST_ITEMS_CACHE_TTL_MS = 30 * 60 * 1000
+
+const YOUTUBE_SEARCH_FIELDS =
+  'etag,items(id/videoId,snippet(channelId,channelTitle,title,publishedAt))'
+const YOUTUBE_VIDEOS_FIELDS =
+  'etag,items(id,etag,snippet(publishedAt,channelId,channelTitle,title,description,tags,categoryId),statistics(viewCount,likeCount,commentCount),contentDetails(duration))'
+const YOUTUBE_CHANNELS_FIELDS =
+  'etag,items(id,etag,snippet(title),contentDetails/relatedPlaylists/uploads)'
+const YOUTUBE_PLAYLIST_ITEMS_FIELDS =
+  'etag,items(snippet(resourceId/videoId))'
+const QUOTA_USAGE_STORAGE_KEY = 'crateDigger.youtubeQuotaUsageEstimate'
 
 const DISCOVERY_YEARS = Array.from(
   { length: DISCOVERY_YEAR_END - DISCOVERY_YEAR_START + 1 },
@@ -388,6 +425,206 @@ function getApiKey() {
   return import.meta.env.VITE_YOUTUBE_API_KEY || ''
 }
 
+function getSafeLocalStorage() {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      return window.localStorage
+    }
+  } catch {
+    // Ignore storage access failures.
+  }
+
+  return null
+}
+
+function getQuotaDateKey() {
+  const now = new Date()
+  const month = String(now.getMonth() + 1).padStart(2, '0')
+  const day = String(now.getDate()).padStart(2, '0')
+
+  return `${now.getFullYear()}-${month}-${day}`
+}
+
+function readStoredQuotaUsage() {
+  const today = getQuotaDateKey()
+  const storage = getSafeLocalStorage()
+
+  if (!storage) {
+    return {
+      date: today,
+      dailyUnits: 0,
+      sessionUnits: 0,
+    }
+  }
+
+  try {
+    const stored = JSON.parse(storage.getItem(QUOTA_USAGE_STORAGE_KEY) || '{}')
+
+    return {
+      date: today,
+      dailyUnits: stored.date === today ? Number(stored.dailyUnits || 0) : 0,
+      sessionUnits: 0,
+    }
+  } catch {
+    return {
+      date: today,
+      dailyUnits: 0,
+      sessionUnits: 0,
+    }
+  }
+}
+
+let quotaUsage = readStoredQuotaUsage()
+
+function persistQuotaUsage() {
+  const storage = getSafeLocalStorage()
+
+  if (!storage) {
+    return
+  }
+
+  try {
+    storage.setItem(
+      QUOTA_USAGE_STORAGE_KEY,
+      JSON.stringify({
+        date: quotaUsage.date,
+        dailyUnits: quotaUsage.dailyUnits,
+      }),
+    )
+  } catch {
+    // Ignore quota estimate persistence failures.
+  }
+}
+
+function recordQuotaUsage({ endpoint, cost, requestKey, cacheStatus = 'network' }) {
+  const estimatedCost = Number(cost || 0)
+
+  if (estimatedCost <= 0) {
+    return
+  }
+
+  const today = getQuotaDateKey()
+
+  if (quotaUsage.date !== today) {
+    quotaUsage = {
+      date: today,
+      dailyUnits: 0,
+      sessionUnits: 0,
+    }
+  }
+
+  quotaUsage.dailyUnits += estimatedCost
+  quotaUsage.sessionUnits += estimatedCost
+  persistQuotaUsage()
+
+  if (!QUOTA_DEBUG) {
+    return
+  }
+
+  const logPayload = {
+    endpoint,
+    estimatedCost,
+    cacheStatus,
+    sessionUnits: quotaUsage.sessionUnits,
+    dailyUnits: quotaUsage.dailyUnits,
+    requestKey,
+  }
+
+  if (estimatedCost >= YOUTUBE_QUOTA_COSTS.search) {
+    console.warn('[CrateDigger][youtube][quota] expensive request', logPayload)
+    return
+  }
+
+  console.info('[CrateDigger][youtube][quota] request', logPayload)
+}
+
+function logQuotaCacheHit(label, key) {
+  if (!QUOTA_DEBUG) {
+    return
+  }
+
+  console.info('[CrateDigger][youtube][quota] cache hit', {
+    label,
+    key,
+    estimatedCost: 0,
+    sessionUnits: quotaUsage.sessionUnits,
+    dailyUnits: quotaUsage.dailyUnits,
+  })
+}
+
+function getFreshCacheEntry(cache, key) {
+  const entry = cache.get(key)
+
+  if (!entry || entry.expiresAt <= Date.now()) {
+    return null
+  }
+
+  return entry
+}
+
+function getStaleCacheEntry(cache, key) {
+  return cache.get(key) || null
+}
+
+function setCacheEntry(cache, key, data, ttlMs, etag = '') {
+  const now = Date.now()
+
+  cache.set(key, {
+    data,
+    etag,
+    cachedAt: now,
+    expiresAt: now + ttlMs,
+  })
+}
+
+async function getOrFetchCached(cache, key, ttlMs, fetcher, options = {}) {
+  const label = options.label || 'youtube request'
+  const freshEntry = getFreshCacheEntry(cache, key)
+
+  if (freshEntry) {
+    logQuotaCacheHit(label, key)
+    return freshEntry.data
+  }
+
+  const inFlightKey = `${label}:${key}`
+
+  if (requestInFlightCache.has(inFlightKey)) {
+    logQuotaCacheHit(`${label} in-flight`, key)
+    return requestInFlightCache.get(inFlightKey)
+  }
+
+  const staleEntry = getStaleCacheEntry(cache, key)
+  const requestPromise = (async () => {
+    const result = await fetcher(staleEntry)
+    const data = result && Object.prototype.hasOwnProperty.call(result, 'data')
+      ? result.data
+      : result
+    const etag = result?.etag || staleEntry?.etag || ''
+
+    setCacheEntry(cache, key, data, ttlMs, etag)
+    return data
+  })()
+
+  requestInFlightCache.set(inFlightKey, requestPromise)
+
+  try {
+    return await requestPromise
+  } finally {
+    requestInFlightCache.delete(inFlightKey)
+  }
+}
+
+function buildRequestLogKey(url) {
+  try {
+    const requestUrl = new URL(url)
+    requestUrl.searchParams.delete('key')
+    requestUrl.searchParams.sort()
+    return `${requestUrl.pathname}?${requestUrl.searchParams.toString()}`
+  } catch {
+    return 'youtube-data-api'
+  }
+}
+
 function cleanYouTubeVideoId(value) {
   const match = String(value || '').match(/[a-zA-Z0-9_-]{11}/)
   return match?.[0] || ''
@@ -601,11 +838,23 @@ function getDiscoverySeedKey(discoverySeed) {
   return normalizeNumericSeed(discoverySeed)
 }
 
+function getDiscoveryQueueIndex(filters = {}) {
+  const index = Number(filters.discoveryQueueIndex ?? 0)
+
+  if (!Number.isFinite(index) || index < 0) {
+    return 0
+  }
+
+  return Math.floor(index)
+}
+
 function buildSearchKey(query, filters = {}) {
   return JSON.stringify({
     query: String(query || '').trim().toLowerCase(),
-    refreshKey: filters.refreshKey ?? 0,
+    // The discovery seed already controls refresh variety. Excluding refreshKey
+    // prevents repeated API work when the same seed/query/filter set is retried.
     discoverySeed: getDiscoverySeedKey(filters.discoverySeed),
+    discoveryQueueIndex: getDiscoveryQueueIndex(filters),
     seedQueryCount: SEED_QUERY_COUNT,
     youtubeResultsPerQuery: YOUTUBE_RESULTS_PER_QUERY,
     genre: filters.genre ?? 'all',
@@ -919,6 +1168,7 @@ function normalizeYouTubeVideo(video, filters = {}) {
     title: snippet.title || 'Untitled Upload',
     description: snippet.description || '',
     artist: displayArtist,
+    channelId: snippet.channelId || '',
     channelTitle: displayArtist,
     sourceChannelTitle,
     duration: parsedDuration.label,
@@ -1057,8 +1307,71 @@ function evaluateVideoQuality(track, filters = {}) {
   }
 }
 
-async function fetchYouTubeJson(url) {
-  const response = await fetch(url)
+async function fetchYouTubeJson(url, options = {}) {
+  const {
+    endpoint = 'youtube.list',
+    quotaCost = 1,
+    cacheEntry = null,
+  } = options
+  const requestKey = buildRequestLogKey(url)
+  const headers = {}
+
+  if (cacheEntry?.etag) {
+    headers['If-None-Match'] = cacheEntry.etag
+  }
+
+  recordQuotaUsage({
+    endpoint,
+    cost: quotaCost,
+    requestKey,
+    cacheStatus: cacheEntry?.etag ? 'conditional-network' : 'network',
+  })
+
+  let response
+
+  try {
+    response = await fetch(
+      url,
+      Object.keys(headers).length > 0
+        ? { headers }
+        : undefined,
+    )
+  } catch (error) {
+    if (cacheEntry?.etag) {
+      if (QUOTA_DEBUG) {
+        console.warn('[CrateDigger][youtube] conditional request failed; retrying without ETag', {
+          endpoint,
+          requestKey,
+          error,
+        })
+      }
+
+      try {
+        response = await fetch(url)
+      } catch (retryError) {
+        if (cacheEntry?.data) {
+          return {
+            data: cacheEntry.data,
+            etag: cacheEntry.etag || '',
+            notModified: true,
+          }
+        }
+
+        throw retryError
+      }
+    } else {
+      throw error
+    }
+  }
+
+  if (response.status === 304 && cacheEntry?.data) {
+    return {
+      data: cacheEntry.data,
+      etag: cacheEntry.etag || '',
+      notModified: true,
+    }
+  }
+
   const data = await response.json().catch(() => null)
 
   if (!response.ok) {
@@ -1081,7 +1394,11 @@ async function fetchYouTubeJson(url) {
     throw error
   }
 
-  return data
+  return {
+    data,
+    etag: response.headers.get('etag') || data?.etag || cacheEntry?.etag || '',
+    notModified: false,
+  }
 }
 
 function getVideoId(track) {
@@ -1171,41 +1488,367 @@ function chunkArray(values = [], chunkSize = YOUTUBE_VIDEO_DETAILS_BATCH_SIZE) {
   return chunks
 }
 
-async function fetchYouTubeSearchVideoIds(apiKey, queryPlanItem) {
-  const searchUrl = new URL('https://www.googleapis.com/youtube/v3/search')
+function appendUniqueVideoIds(targetVideoIds, seenVideoIds, nextVideoIds = [], limit = YOUTUBE_DISCOVERY_MAX_VIDEO_IDS) {
+  for (const nextVideoId of nextVideoIds) {
+    const videoId = cleanYouTubeVideoId(nextVideoId)
 
-  searchUrl.searchParams.set('part', 'snippet')
-  searchUrl.searchParams.set('type', 'video')
-  searchUrl.searchParams.set('maxResults', String(YOUTUBE_RESULTS_PER_QUERY))
-  searchUrl.searchParams.set('videoCategoryId', '10')
-  searchUrl.searchParams.set('videoEmbeddable', 'true')
-  searchUrl.searchParams.set('videoSyndicated', 'true')
-  searchUrl.searchParams.set('safeSearch', 'none')
-  searchUrl.searchParams.set('q', queryPlanItem.searchQuery)
-  searchUrl.searchParams.set('key', apiKey)
+    if (!videoId || seenVideoIds.has(videoId)) {
+      continue
+    }
 
-  if (queryPlanItem.uploadWindow) {
-    searchUrl.searchParams.set('publishedAfter', queryPlanItem.uploadWindow.after)
-    searchUrl.searchParams.set('publishedBefore', queryPlanItem.uploadWindow.before)
+    if (targetVideoIds.length >= limit) {
+      break
+    }
+
+    seenVideoIds.add(videoId)
+    targetVideoIds.push(videoId)
+  }
+}
+
+function buildSearchResultCacheKey(queryPlanItem) {
+  return JSON.stringify({
+    q: queryPlanItem.searchQuery,
+    publishedAfter: queryPlanItem.uploadWindow?.after || '',
+    publishedBefore: queryPlanItem.uploadWindow?.before || '',
+    maxResults: YOUTUBE_RESULTS_PER_QUERY,
+    videoCategoryId: '10',
+    videoEmbeddable: true,
+    videoSyndicated: true,
+  })
+}
+
+function buildBatchCacheKey(values = []) {
+  return uniqueDiscoveryValues(values)
+    .sort()
+    .join(',')
+}
+
+function extractSearchVideoIds(searchResult) {
+  return (searchResult?.items || [])
+    .map((item) => item.id?.videoId)
+    .filter(Boolean)
+}
+
+function getSearchItemChannel(item) {
+  const snippet = item?.snippet || {}
+
+  return {
+    id: String(snippet.channelId || '').trim(),
+    title: String(snippet.channelTitle || '').trim(),
+    videoTitle: String(snippet.title || '').trim(),
+  }
+}
+
+function isKnownMusicChannelCandidate(item, filters = {}) {
+  const channel = getSearchItemChannel(item)
+
+  if (!channel.id || !channel.title) {
+    return false
   }
 
-  const searchResult = await fetchYouTubeJson(searchUrl.toString())
-  return (searchResult.items || []).map((item) => item.id?.videoId).filter(Boolean)
+  const combinedText = `${channel.videoTitle} ${channel.title}`
+  const normalizedChannelTitle = normalizeDiscoveryText(channel.title)
+  const normalizedCombinedText = normalizeDiscoveryText(combinedText)
+
+  if (filters.preferTopicChannels !== false && /\btopic\b/.test(normalizedChannelTitle)) {
+    return true
+  }
+
+  const hasTrackIntent =
+    /\bofficial audio\b|\bprovided to youtube\b|\boriginal mix\b|\bextended mix\b|\bpremiere\b|\bfull track\b|\bsingle\b|\brelease\b/.test(
+      normalizedCombinedText,
+    )
+  const hasMusicChannelSignal =
+    /\brecords?\b|\brecordings?\b|\blabel\b|\bmusic\b|\bofficial\b|\baudio\b|\bpremiere\b|\buploads?\b/.test(
+      normalizedChannelTitle,
+    )
+
+  return hasTrackIntent && hasMusicChannelSignal
+}
+
+function collectKnownMusicChannelCandidates(items = [], candidates, filters = {}) {
+  items.forEach((item) => {
+    if (!isKnownMusicChannelCandidate(item, filters)) {
+      return
+    }
+
+    const channel = getSearchItemChannel(item)
+
+    if (!channel.id || candidates.has(channel.id)) {
+      return
+    }
+
+    candidates.set(channel.id, {
+      ...channel,
+      isTopic: /\btopic\b/.test(normalizeDiscoveryText(channel.title)),
+    })
+  })
+}
+
+function getKnownMusicChannelIds(candidates) {
+  return Array.from(candidates.values())
+    .sort((a, b) => Number(b.isTopic) - Number(a.isTopic))
+    .slice(0, YOUTUBE_CHANNEL_EXPANSION_LIMIT)
+    .map((channel) => channel.id)
+}
+
+function logDiscoveryQueueRequest({ reason = 'initial', queueIndex = 0, queryPlan = [], queryPlanItem = null }) {
+  if (!QUOTA_DEBUG) {
+    return
+  }
+
+  const loadedSearchCount = Math.min(queueIndex + 1, queryPlan.length || 1)
+  const previousEagerUnits = PREVIOUS_EAGER_SEARCH_LIST_COUNT * YOUTUBE_QUOTA_COSTS.search
+  const currentSearchUnits = loadedSearchCount * YOUTUBE_QUOTA_COSTS.search
+  const estimatedSavedQuotaUnits = Math.max(previousEagerUnits - currentSearchUnits, 0)
+  const payload = {
+    reason,
+    candidateIndex: queueIndex,
+    candidateCount: queryPlan.length,
+    query: queryPlanItem?.searchQuery || '',
+    selectedStyle: queryPlanItem?.style || '',
+    estimatedCurrentSearchUnits: currentSearchUnits,
+    estimatedPreviousEagerSearchUnits: previousEagerUnits,
+    estimatedSavedQuotaUnits,
+  }
+
+  if (reason === 'lazy') {
+    console.info('[CrateDigger][youtube][quota] lazy discovery expansion triggered', payload)
+    return
+  }
+
+  console.info('[CrateDigger][youtube][quota] initial discovery limited to one search.list request', payload)
+}
+
+async function fetchYouTubeSearchResult(apiKey, queryPlanItem) {
+  const cacheKey = buildSearchResultCacheKey(queryPlanItem)
+
+  return getOrFetchCached(
+    searchResultCache,
+    cacheKey,
+    SEARCH_RESULT_CACHE_TTL_MS,
+    async (cacheEntry) => {
+      const searchUrl = new URL('https://www.googleapis.com/youtube/v3/search')
+
+      searchUrl.searchParams.set('part', 'snippet')
+      searchUrl.searchParams.set('type', 'video')
+      searchUrl.searchParams.set('maxResults', String(YOUTUBE_RESULTS_PER_QUERY))
+      searchUrl.searchParams.set('videoCategoryId', '10')
+      searchUrl.searchParams.set('videoEmbeddable', 'true')
+      searchUrl.searchParams.set('videoSyndicated', 'true')
+      searchUrl.searchParams.set('safeSearch', 'none')
+      searchUrl.searchParams.set('q', queryPlanItem.searchQuery)
+      searchUrl.searchParams.set('fields', YOUTUBE_SEARCH_FIELDS)
+      searchUrl.searchParams.set('key', apiKey)
+
+      if (queryPlanItem.uploadWindow) {
+        searchUrl.searchParams.set('publishedAfter', queryPlanItem.uploadWindow.after)
+        searchUrl.searchParams.set('publishedBefore', queryPlanItem.uploadWindow.before)
+      }
+
+      const searchResult = await fetchYouTubeJson(searchUrl.toString(), {
+        endpoint: 'search.list',
+        quotaCost: YOUTUBE_QUOTA_COSTS.search,
+        cacheEntry,
+      })
+
+      return {
+        data: searchResult.data || { items: [] },
+        etag: searchResult.etag,
+      }
+    },
+    { label: 'search.list' },
+  )
+}
+
+async function fetchYouTubeChannelsByIds(apiKey, channelIds = []) {
+  const channelsById = new Map()
+  const uniqueChannelIds = uniqueDiscoveryValues(channelIds)
+  const missingChannelIds = []
+
+  uniqueChannelIds.forEach((channelId) => {
+    const cachedChannel = getFreshCacheEntry(channelMetadataCache, channelId)
+
+    if (cachedChannel) {
+      logQuotaCacheHit('channels.list channel', channelId)
+      channelsById.set(channelId, cachedChannel.data)
+      return
+    }
+
+    missingChannelIds.push(channelId)
+  })
+
+  for (const channelIdChunk of chunkArray(missingChannelIds, YOUTUBE_CHANNEL_DETAILS_BATCH_SIZE)) {
+    const batchKey = buildBatchCacheKey(channelIdChunk)
+    const channelsResult = await getOrFetchCached(
+      channelBatchCache,
+      batchKey,
+      CHANNEL_METADATA_CACHE_TTL_MS,
+      async (cacheEntry) => {
+        const channelsUrl = new URL('https://www.googleapis.com/youtube/v3/channels')
+
+        channelsUrl.searchParams.set('part', 'snippet,contentDetails')
+        channelsUrl.searchParams.set('id', channelIdChunk.join(','))
+        channelsUrl.searchParams.set('fields', YOUTUBE_CHANNELS_FIELDS)
+        channelsUrl.searchParams.set('key', apiKey)
+
+        const channelResult = await fetchYouTubeJson(channelsUrl.toString(), {
+          endpoint: 'channels.list',
+          quotaCost: YOUTUBE_QUOTA_COSTS.channels,
+          cacheEntry,
+        })
+
+        return {
+          data: channelResult.data || { items: [] },
+          etag: channelResult.etag,
+        }
+      },
+      { label: 'channels.list' },
+    )
+
+    ;(channelsResult.items || []).forEach((item) => {
+      setCacheEntry(
+        channelMetadataCache,
+        item.id,
+        item,
+        CHANNEL_METADATA_CACHE_TTL_MS,
+        item.etag || '',
+      )
+      channelsById.set(item.id, item)
+    })
+  }
+
+  return channelsById
+}
+
+async function fetchYouTubeUploadVideoIds(apiKey, playlistId) {
+  const normalizedPlaylistId = String(playlistId || '').trim()
+
+  if (!normalizedPlaylistId) {
+    return []
+  }
+
+  const cacheKey = JSON.stringify({
+    playlistId: normalizedPlaylistId,
+    maxResults: YOUTUBE_UPLOADS_PER_CHANNEL,
+  })
+
+  return getOrFetchCached(
+    playlistItemsCache,
+    cacheKey,
+    PLAYLIST_ITEMS_CACHE_TTL_MS,
+    async (cacheEntry) => {
+      const playlistUrl = new URL('https://www.googleapis.com/youtube/v3/playlistItems')
+
+      playlistUrl.searchParams.set('part', 'snippet')
+      playlistUrl.searchParams.set('playlistId', normalizedPlaylistId)
+      playlistUrl.searchParams.set('maxResults', String(YOUTUBE_UPLOADS_PER_CHANNEL))
+      playlistUrl.searchParams.set('fields', YOUTUBE_PLAYLIST_ITEMS_FIELDS)
+      playlistUrl.searchParams.set('key', apiKey)
+
+      const playlistResult = await fetchYouTubeJson(playlistUrl.toString(), {
+        endpoint: 'playlistItems.list',
+        quotaCost: YOUTUBE_QUOTA_COSTS.playlistItems,
+        cacheEntry,
+      })
+      const videoIds = (playlistResult.data?.items || [])
+        .map((item) => item.snippet?.resourceId?.videoId)
+        .filter(Boolean)
+
+      return {
+        data: videoIds,
+        etag: playlistResult.etag,
+      }
+    },
+    { label: 'playlistItems.list' },
+  )
+}
+
+async function fetchKnownChannelUploadVideoIds(apiKey, channelCandidates) {
+  const channelIds = getKnownMusicChannelIds(channelCandidates)
+
+  if (channelIds.length === 0) {
+    return []
+  }
+
+  const channelsById = await fetchYouTubeChannelsByIds(apiKey, channelIds)
+  const uploadPlaylistIds = channelIds
+    .map((channelId) => channelsById.get(channelId)?.contentDetails?.relatedPlaylists?.uploads)
+    .filter(Boolean)
+
+  if (uploadPlaylistIds.length === 0) {
+    return []
+  }
+
+  const uploadVideoIdLists = await Promise.all(
+    uploadPlaylistIds.map((playlistId) => fetchYouTubeUploadVideoIds(apiKey, playlistId)),
+  )
+  const uploadVideoIds = uniqueDiscoveryValues(uploadVideoIdLists.flat())
+
+  if (QUOTA_DEBUG && uploadVideoIds.length > 0) {
+    console.info('[CrateDigger][youtube][quota] cheap channel upload expansion', {
+      channels: channelIds.length,
+      playlists: uploadPlaylistIds.length,
+      videoIds: uploadVideoIds.length,
+    })
+  }
+
+  return uploadVideoIds
 }
 
 async function fetchYouTubeVideosByIds(apiKey, videoIds = []) {
   const videosById = new Map()
+  const uniqueVideoIds = uniqueDiscoveryValues(videoIds.map(cleanYouTubeVideoId).filter(Boolean))
+  const missingVideoIds = []
 
-  for (const videoIdChunk of chunkArray(videoIds)) {
-    const videosUrl = new URL('https://www.googleapis.com/youtube/v3/videos')
+  uniqueVideoIds.forEach((videoId) => {
+    const cachedVideo = getFreshCacheEntry(videoDetailsCache, videoId)
 
-    videosUrl.searchParams.set('part', 'snippet,statistics,contentDetails')
-    videosUrl.searchParams.set('id', videoIdChunk.join(','))
-    videosUrl.searchParams.set('key', apiKey)
+    if (cachedVideo) {
+      logQuotaCacheHit('videos.list video', videoId)
+      videosById.set(videoId, cachedVideo.data)
+      return
+    }
 
-    const videosResult = await fetchYouTubeJson(videosUrl.toString())
+    missingVideoIds.push(videoId)
+  })
+
+  for (const videoIdChunk of chunkArray(missingVideoIds)) {
+    const batchKey = buildBatchCacheKey(videoIdChunk)
+    const videosResult = await getOrFetchCached(
+      videoBatchCache,
+      batchKey,
+      VIDEO_DETAILS_CACHE_TTL_MS,
+      async (cacheEntry) => {
+        const videosUrl = new URL('https://www.googleapis.com/youtube/v3/videos')
+
+        videosUrl.searchParams.set('part', 'snippet,statistics,contentDetails')
+        videosUrl.searchParams.set('id', videoIdChunk.join(','))
+        videosUrl.searchParams.set('fields', YOUTUBE_VIDEOS_FIELDS)
+        videosUrl.searchParams.set('key', apiKey)
+
+        const videoResult = await fetchYouTubeJson(videosUrl.toString(), {
+          endpoint: 'videos.list',
+          quotaCost: YOUTUBE_QUOTA_COSTS.videos,
+          cacheEntry,
+        })
+
+        return {
+          data: videoResult.data || { items: [] },
+          etag: videoResult.etag,
+        }
+      },
+      { label: 'videos.list' },
+    )
 
     ;(videosResult.items || []).forEach((item) => {
+      setCacheEntry(
+        videoDetailsCache,
+        item.id,
+        item,
+        VIDEO_DETAILS_CACHE_TTL_MS,
+        item.etag || '',
+      )
       videosById.set(item.id, item)
     })
   }
@@ -1222,20 +1865,33 @@ async function fetchYouTubeTracks(query, filters = {}) {
 
   const seedProfile = buildSeedProfile(filters.discoverySeed, filters)
   const queryPlan = buildSeededSearchQueries(query, filters, seedProfile)
+  const queueIndex = getDiscoveryQueueIndex(filters)
+  const queryPlanItem = queryPlan[queueIndex]
   const seenVideoIds = new Set()
   const videoIds = []
+  const channelCandidates = new Map()
 
-  for (const queryPlanItem of queryPlan) {
-    const queryVideoIds = await fetchYouTubeSearchVideoIds(apiKey, queryPlanItem)
+  if (!queryPlanItem) {
+    return []
+  }
 
-    queryVideoIds.forEach((videoId) => {
-      if (seenVideoIds.has(videoId)) {
-        return
-      }
+  logDiscoveryQueueRequest({
+    reason: filters.discoveryLoadReason || 'initial',
+    queueIndex,
+    queryPlan,
+    queryPlanItem,
+  })
 
-      seenVideoIds.add(videoId)
-      videoIds.push(videoId)
-    })
+  const searchResult = await fetchYouTubeSearchResult(apiKey, queryPlanItem)
+  const searchItems = searchResult.items || []
+
+  collectKnownMusicChannelCandidates(searchItems, channelCandidates, filters)
+  appendUniqueVideoIds(videoIds, seenVideoIds, extractSearchVideoIds(searchResult))
+
+  if (filters.preferTopicChannels !== false) {
+    const uploadVideoIds = await fetchKnownChannelUploadVideoIds(apiKey, channelCandidates)
+
+    appendUniqueVideoIds(videoIds, seenVideoIds, uploadVideoIds)
   }
 
   if (videoIds.length === 0) {
@@ -1264,8 +1920,8 @@ async function fetchYouTubeTracks(query, filters = {}) {
   const scored = attachGemScores(accepted)
 
   debugYouTubeResults({
-    searchQuery: queryPlan.map((item) => item.searchQuery).join(' | '),
-    queryPlan,
+    searchQuery: queryPlanItem.searchQuery,
+    queryPlan: [queryPlanItem],
     candidates,
     accepted,
     rejectedCounts,
@@ -1285,12 +1941,35 @@ export async function searchTracks(query = '', filters = {}) {
   const queryPlan = buildSeededSearchQueries(query, effectiveFilters, seedProfile)
 
   const cacheKey = buildSearchKey(query, effectiveFilters)
+  const cachedSearch = getFreshCacheEntry(searchCache, cacheKey)
 
-  if (searchCache.has(cacheKey)) {
-    return searchCache.get(cacheKey)
+  if (cachedSearch) {
+    logQuotaCacheHit('searchTracks', cacheKey)
+    setSearchStatus(
+      'youtube',
+      false,
+      cachedSearch.data.length === 0
+        ? 'No clean music tracks found for this search.'
+        : 'Live YouTube results loaded.',
+      {
+        discoverySeed: {
+          ...seedProfile,
+          queryPlan,
+        },
+      },
+    )
+
+    return cachedSearch.data
   }
 
-  const cachedPromise = (async () => {
+  const inFlightKey = `searchTracks:${cacheKey}`
+
+  if (requestInFlightCache.has(inFlightKey)) {
+    logQuotaCacheHit('searchTracks in-flight', cacheKey)
+    return requestInFlightCache.get(inFlightKey)
+  }
+
+  const searchPromise = (async () => {
     const apiKey = getApiKey()
 
     if (!apiKey) {
@@ -1308,10 +1987,15 @@ export async function searchTracks(query = '', filters = {}) {
       const apiTracks = await fetchYouTubeTracks(query, effectiveFilters)
 
       if (Array.isArray(apiTracks)) {
+        const tracks = seededShuffle(
+          filterTracks(apiTracks, { ...effectiveFilters, query: '' }),
+          createSeededRandom(`${seedProfile.numericSeed}:result-order`),
+        )
+
         setSearchStatus(
           'youtube',
           false,
-          apiTracks.length === 0
+          tracks.length === 0
             ? 'No clean music tracks found for this search.'
             : 'Live YouTube results loaded.',
           {
@@ -1322,10 +2006,8 @@ export async function searchTracks(query = '', filters = {}) {
           },
         )
 
-        return seededShuffle(
-          filterTracks(apiTracks, { ...effectiveFilters, query: '' }),
-          createSeededRandom(`${seedProfile.numericSeed}:result-order`),
-        )
+        setCacheEntry(searchCache, cacheKey, tracks, TRACK_RESULT_CACHE_TTL_MS)
+        return tracks
       }
     } catch (error) {
       console.error('[CrateDigger][youtube] request failed', error)
@@ -1356,15 +2038,12 @@ export async function searchTracks(query = '', filters = {}) {
     return []
   })()
 
-  searchCache.set(cacheKey, cachedPromise)
+  requestInFlightCache.set(inFlightKey, searchPromise)
 
   try {
-    const result = await cachedPromise
-    searchCache.set(cacheKey, Promise.resolve(result))
-    return result
-  } catch (error) {
-    searchCache.delete(cacheKey)
-    throw error
+    return await searchPromise
+  } finally {
+    requestInFlightCache.delete(inFlightKey)
   }
 }
 
@@ -1439,14 +2118,8 @@ export async function getVideoDetails(videoId, filters = {}) {
   }
 
   try {
-    const videosUrl = new URL('https://www.googleapis.com/youtube/v3/videos')
-
-    videosUrl.searchParams.set('part', 'snippet,statistics,contentDetails')
-    videosUrl.searchParams.set('id', normalizedVideoId)
-    videosUrl.searchParams.set('key', apiKey)
-
-    const videosResult = await fetchYouTubeJson(videosUrl.toString())
-    const video = videosResult.items?.[0]
+    const videosById = await fetchYouTubeVideosByIds(apiKey, [normalizedVideoId])
+    const video = videosById.get(normalizedVideoId)
 
     return normalizeYouTubeVideo(video, filters) || null
   } catch (error) {
