@@ -101,7 +101,6 @@ function TrackSearchLinks({
             className="track-search-link"
             style={linkStyle}
             aria-label={`Search ${label} for this track`}
-            title={label}
           >
             <Icon className="h-4 w-4" />
             <span className="sr-only">{label}</span>

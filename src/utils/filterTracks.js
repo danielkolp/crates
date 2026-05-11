@@ -25,6 +25,8 @@ const DEFAULT_OPTIONS = {
   digDeeperMatchMode: 'any',
 }
 
+const DIVERSITY_PENALTY_STEP = 0.25
+
 function clamp(value, min, max) {
   const numeric = Number(value)
   if (!Number.isFinite(numeric)) return min
@@ -46,6 +48,26 @@ function normalizeText(value) {
     .replace(/[^\w\s#&/.'+-]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
+}
+
+function normalizeDiversityKey(value) {
+  return normalizeText(value).replace(/\b(topic|official|records?|recordings?|music|label)\b/g, '').replace(/\s+/g, ' ').trim()
+}
+
+function getDiversityKey(track) {
+  const artistKey = normalizeDiversityKey(track?.artist)
+  const channelKey = normalizeDiversityKey(track?.sourceChannelTitle || track?.channelTitle)
+  const channelId = toText(track?.sourceChannelId || track?.channelId)
+
+  if (artistKey) {
+    return `artist:${artistKey}`
+  }
+
+  if (channelKey) {
+    return `channel-title:${channelKey}`
+  }
+
+  return channelId ? `channel:${channelId.toLowerCase()}` : `track:${getVideoId(track)}`
 }
 
 function getTags(track) {
@@ -938,6 +960,64 @@ function compareBySort(a, b, sortBy) {
   )
 }
 
+function getTrackBaseRankScore(track) {
+  const explicitBase = Number(track?.baseRankScore)
+  if (Number.isFinite(explicitBase)) return explicitBase
+
+  const rankScore = Number(track?.rankScore)
+  if (Number.isFinite(rankScore)) return rankScore
+
+  const displayScore = Number(track?.displayScore)
+  if (Number.isFinite(displayScore)) return displayScore
+
+  return parseCount(track?.gemScore, 0)
+}
+
+function attachRankFields(track, { baseRankScore, diversityPenalty = 0, diversityCount = 0, diversityKey = '' } = {}) {
+  const normalizedBaseRankScore = Number((Number(baseRankScore ?? getTrackBaseRankScore(track)) || 0).toFixed(2))
+  const normalizedPenalty = Number(Math.max(0, Number(diversityPenalty) || 0).toFixed(2))
+  const rankScore = Number((normalizedBaseRankScore - normalizedPenalty).toFixed(2))
+
+  return {
+    ...track,
+    baseRankScore: normalizedBaseRankScore,
+    rankScore,
+    displayScore: rankScore,
+    diversityPenalty: normalizedPenalty,
+    diversityCount,
+    diversityKey,
+  }
+}
+
+export function diversifyTracks(tracks = []) {
+  const seenArtists = new Map()
+
+  return [...tracks]
+    .sort((a, b) => (
+      getTrackBaseRankScore(b) - getTrackBaseRankScore(a) ||
+      parseCount(b?.gemScore, 0) - parseCount(a?.gemScore, 0)
+    ))
+    .map((track) => {
+      const diversityKey = getDiversityKey(track)
+      const count = diversityKey.startsWith('track:') ? 0 : seenArtists.get(diversityKey) || 0
+
+      if (!diversityKey.startsWith('track:')) {
+        seenArtists.set(diversityKey, count + 1)
+      }
+
+      return attachRankFields(track, {
+        baseRankScore: getTrackBaseRankScore(track),
+        diversityPenalty: count * DIVERSITY_PENALTY_STEP,
+        diversityCount: count,
+        diversityKey,
+      })
+    })
+    .sort((a, b) => (
+      b.rankScore - a.rankScore ||
+      parseCount(b?.gemScore, 0) - parseCount(a?.gemScore, 0)
+    ))
+}
+
 function incrementReason(map, reason) {
   map.set(reason, (map.get(reason) || 0) + 1)
 }
@@ -977,6 +1057,8 @@ function summarizeScoreBreakdown(track) {
     channel: track?.sourceChannelTitle || track?.channelTitle || track?.artist,
     views: track?.views,
     gemScore: track?.gemScore,
+    rankScore: track?.rankScore,
+    diversityPenalty: track?.diversityPenalty,
     qualityScore: track?.qualityScore ?? track?.trackQualityScore,
     musicLikelihood: breakdown.musicLikelihood,
     baseGemScore: breakdown.baseGemScore,
@@ -1061,14 +1143,19 @@ export function filterTracks(tracks = [], options = {}) {
     })
 
   accepted.sort((a, b) => compareBySort(a, b, sortByValue))
+  const rankedTracks = accepted.map((meta) => attachRankFields(meta.track, {
+    baseRankScore: meta.rankingScore,
+  }))
+  const sortedTracks = sortByValue === 'gemScore' ? diversifyTracks(rankedTracks) : rankedTracks
+
   debugFilterSummary({
     config,
     initialCount: tracks.length,
-    accepted,
+    accepted: sortedTracks.map((track, index) => buildTrackMeta(track, index, config)),
     rejectedCounts,
   })
 
-  return accepted.map(({ track }) => track)
+  return sortedTracks
 }
 
 export {

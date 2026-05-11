@@ -1,7 +1,7 @@
 // youtubeClient.js - handles searching YouTube for music tracks, normalizing results,
 // and applying quality filters. Uses YouTube Data API v3 only.
 
-import { attachGemScores, getTrackQualityScore } from '../utils/gemScore'
+import { attachGemScores, getGemReasons, getTrackQualityScore } from '../utils/gemScore'
 import {
   filterTracks,
   getAvailableFormatOptions,
@@ -1673,6 +1673,8 @@ function summarizeTopTrack(track) {
     views: track.views,
     qualityScore: track.qualityScore,
     gemScore: track.gemScore,
+    rankScore: track.rankScore,
+    diversityPenalty: track.diversityPenalty,
     musicLikelihood: breakdown.musicLikelihood,
     baseGemScore: breakdown.baseGemScore,
     engagementBoost: breakdown.engagementBoost,
@@ -1703,7 +1705,7 @@ function debugYouTubeResults({ searchQuery, queryPlan, candidates, accepted, rej
 
   console.table(
     [...scored]
-      .sort((a, b) => b.gemScore - a.gemScore)
+      .sort((a, b) => (b.rankScore ?? b.gemScore) - (a.rankScore ?? a.gemScore))
       .slice(0, 10)
       .map(summarizeTopTrack),
   )
@@ -1757,9 +1759,13 @@ function applyReleaseMetadataGemBoost(track) {
   const minimalMetadataBoost = getMinimalMetadataReleaseBoost(track)
 
   if (minimalMetadataBoost <= 0) {
+    const gemReasons = getGemReasons(track)
+
     return {
       ...track,
       minimalMetadataBoostApplied: false,
+      gemReasons,
+      gemReason: gemReasons.length > 0 ? gemReasons.join('; ') : track.gemReason,
     }
   }
 
@@ -1771,13 +1777,20 @@ function applyReleaseMetadataGemBoost(track) {
     finalScore: nextGemScore,
   }
 
-  return {
+  const nextTrack = {
     ...track,
     gemScore: nextGemScore,
     minimalMetadataBoostApplied: true,
     scoreBreakdown: nextScoreBreakdown,
     flags: [...new Set([...(track.flags || []), 'clean-auto-generated-release'])],
     qualityBadges: [...new Set(['Clean Release', ...(track.qualityBadges || [])])].slice(0, 4),
+  }
+  const gemReasons = getGemReasons(nextTrack)
+
+  return {
+    ...nextTrack,
+    gemReasons,
+    gemReason: gemReasons.length > 0 ? gemReasons.join('; ') : nextTrack.gemReason,
   }
 }
 
@@ -2326,10 +2339,11 @@ export async function searchTracks(query = '', filters = {}) {
       const apiTracks = await fetchYouTubeTracks(query, effectiveFilters)
 
       if (Array.isArray(apiTracks)) {
-        const tracks = seededShuffle(
-          filterTracks(apiTracks, { ...effectiveFilters, query: '' }),
+        const shuffledApiTracks = seededShuffle(
+          apiTracks,
           createSeededRandom(`${seedProfile.numericSeed}:result-order`),
         )
+        const tracks = filterTracks(shuffledApiTracks, { ...effectiveFilters, query: '' })
 
         setSearchStatus(
           'youtube',

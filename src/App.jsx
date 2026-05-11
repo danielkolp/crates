@@ -37,6 +37,7 @@ import {
   normalizeNumericSeed,
   searchTracks,
 } from './api/youtubeClient'
+import { diversifyTracks } from './utils/filterTracks'
 
 const SCREEN_TO_PATH = {
   digger: '/search',
@@ -263,7 +264,7 @@ function App() {
   })
   const toastTimersRef = useRef(new Map())
 
-  const filteredTracks = allTracks
+  const filteredTracks = useMemo(() => diversifyTracks(allTracks), [allTracks])
   const tracksById = trackCatalog
   const playbackQueue = activeScreen === 'digger' ? filteredTracks : allTracks
   const selectedTrack = selectedTrackId ? tracksById[selectedTrackId] : null
@@ -1127,6 +1128,7 @@ function App() {
         shouldApplyDarkMode ? 'theme-dark' : ''
       } ${shouldUseSwipeTheme ? 'theme-swipe' : ''} ${
         shouldApplySwipeDarkMode ? 'theme-swipe-dark' : ''
+      } ${activeScreen === 'digger' ? 'discover-tooltips-disabled' : ''
       }`}
       style={{ height: `calc(100dvh - ${playerReservedHeight}px)`, ...swipeThemeStyle }}
     >

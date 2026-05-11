@@ -246,7 +246,7 @@ function TrackRow({
             )}
           </button>
 
-          <div className="track-title-stack" title={track.title}>
+          <div className="track-title-stack">
             <p className="track-title-line">
               <span className={['track-title-main', isPlaying ? 'track-title-main-playing' : ''].join(' ')}>
                 {titleParts.main}

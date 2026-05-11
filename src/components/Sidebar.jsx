@@ -252,7 +252,6 @@ function Sidebar({
             type="button"
             onClick={handleCopySeed}
             className="mono inline-flex max-w-full border-0 bg-transparent p-0 text-left text-[11px] leading-4 text-zinc-400 opacity-70 transition hover:text-zinc-700 hover:opacity-100"
-            title="Copy crate seed"
             aria-label={`Copy crate seed ${displaySeed}`}
           >
             <span className="truncate">{seedCopied ? 'Seed copied' : `Seed: ${displaySeed}`}</span>

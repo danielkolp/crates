@@ -412,6 +412,13 @@
     transform: translate3d(-50%, 0, 0) rotate(45deg);
   }
 
+  .discover-tooltips-disabled .tooltip-anchor[data-tooltip]::before,
+  .discover-tooltips-disabled .tooltip-anchor[data-tooltip]::after {
+    content: none !important;
+    display: none !important;
+    opacity: 0 !important;
+  }
+
   .tooltip-anchor.tooltip-bottom[data-tooltip]:not([data-tooltip=''])::before {
     top: calc(100% + 10px);
     bottom: auto;
