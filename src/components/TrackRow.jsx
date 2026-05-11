@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { BsCheckLg, BsHeartFill, BsPauseFill, BsPlayFill, BsShareFill } from 'react-icons/bs'
 import ShareModal from './ShareModal'
-import { getArtworkCandidates } from '../hooks/useArtworkTheme'
+import { toRgba, useArtworkTheme } from '../hooks/useArtworkTheme'
 import { getTrackSharePayload } from '../utils/share'
 
 const TRAILING_WRAPPED_META_PATTERN =
@@ -145,10 +145,18 @@ function splitTrackTitle(title) {
   }
 }
 
+function toCssUrl(value) {
+  const source = String(value || '').trim()
+  if (!source) return 'none'
+
+  return `url("${source.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}")`
+}
+
 function TrackRow({
   track,
   isPlaying,
   isPlaybackLoading = false,
+  isDarkMode = false,
   isLiked = false,
   onLikeTrack,
   onRemoveFromLiked,
@@ -156,22 +164,39 @@ function TrackRow({
 }) {
   const [shareOpen, setShareOpen] = useState(false)
   const titleParts = splitTrackTitle(track.title)
-  const [artworkFallback, setArtworkFallback] = useState({ key: '', index: 0 })
-  const artworkCandidates = useMemo(() => getArtworkCandidates(track.artworkUrl), [track.artworkUrl])
-  const artworkKey = track.artworkUrl || ''
-  const artworkCandidateIndex = artworkFallback.key === artworkKey ? artworkFallback.index : 0
-  const artworkSrc = artworkCandidates[artworkCandidateIndex] || track.artworkUrl
-
-  function handleArtworkError() {
-    if (!artworkKey || artworkCandidateIndex >= artworkCandidates.length - 1) {
-      return
-    }
-
-    setArtworkFallback({
-      key: artworkKey,
-      index: artworkCandidateIndex + 1,
-    })
-  }
+  const { artworkSrc, dynamicTheme, handleArtworkError } = useArtworkTheme(track.artworkUrl, { isDarkMode })
+  const rowArtworkUrl = artworkSrc || track.artworkUrl
+  const shouldThemeRow = Boolean(rowArtworkUrl || dynamicTheme)
+  const rowTextColor = isDarkMode ? dynamicTheme?.textColor || 'rgb(244, 244, 245)' : 'rgb(24, 24, 27)'
+  const rowMutedColor = isDarkMode && dynamicTheme ? toRgba(dynamicTheme.textColor, 0.68) : isDarkMode ? 'rgba(212, 212, 216, 0.74)' : 'rgba(63, 63, 70, 0.78)'
+  const themedRowStyle = shouldThemeRow
+    ? {
+        '--track-row-artwork': toCssUrl(rowArtworkUrl),
+        '--track-row-artwork-opacity': isDarkMode ? 0.22 : 0.18,
+        '--track-row-artwork-hover-opacity': isDarkMode ? 0.32 : 0.28,
+        '--track-row-bg': dynamicTheme
+          ? isDarkMode
+            ? `linear-gradient(90deg, ${toRgba(dynamicTheme.cardColor, 0.74)} 0%, ${toRgba(dynamicTheme.mainColor, 0.64)} 100%)`
+            : `linear-gradient(90deg, ${toRgba(dynamicTheme.accentColor, 0.14)} 0%, ${toRgba(dynamicTheme.cardColor, 0.1)} 100%)`
+          : isDarkMode
+            ? 'linear-gradient(90deg, rgba(9, 9, 11, 0.76) 0%, rgba(24, 24, 27, 0.9) 100%)'
+            : 'linear-gradient(90deg, rgba(255, 255, 255, 0.78) 0%, rgba(250, 250, 250, 0.92) 100%)',
+        '--track-row-hover-bg': dynamicTheme
+          ? isDarkMode
+            ? `linear-gradient(90deg, ${toRgba(dynamicTheme.accentColor, 0.64)} 0%, ${toRgba(dynamicTheme.cardColor, 0.74)} 100%)`
+            : `linear-gradient(90deg, ${toRgba(dynamicTheme.accentColor, 0.24)} 0%, ${toRgba(dynamicTheme.mainColor, 0.14)} 100%)`
+          : isDarkMode
+            ? 'linear-gradient(90deg, rgba(39, 39, 42, 0.84) 0%, rgba(24, 24, 27, 0.94) 100%)'
+            : 'linear-gradient(90deg, rgba(255, 255, 255, 0.68) 0%, rgba(244, 244, 245, 0.88) 100%)',
+        '--track-row-text': rowTextColor,
+        '--track-row-muted': rowMutedColor,
+        '--track-row-control-border': dynamicTheme && isDarkMode ? dynamicTheme.borderColor : dynamicTheme ? toRgba(dynamicTheme.accentColor, 0.34) : isDarkMode ? 'rgba(255, 255, 255, 0.34)' : 'rgba(212, 212, 216, 1)',
+        '--track-row-control-bg': dynamicTheme && isDarkMode ? toRgba(dynamicTheme.cardColor, 0.86) : isDarkMode ? 'rgba(24, 24, 27, 0.86)' : 'rgba(255, 255, 255, 0.86)',
+        '--track-row-control-text': dynamicTheme && isDarkMode ? dynamicTheme.textColor : isDarkMode ? 'rgb(244, 244, 245)' : 'rgb(63, 63, 70)',
+        '--track-row-control-active-bg': dynamicTheme && isDarkMode ? dynamicTheme.textColor : 'rgb(24, 24, 27)',
+        '--track-row-control-active-text': dynamicTheme && isDarkMode ? dynamicTheme.mainColor : 'rgb(255, 255, 255)',
+      }
+    : undefined
 
   function handleShareTrack(event) {
     event.stopPropagation()
@@ -183,8 +208,10 @@ function TrackRow({
       <div
         className={[
           'track-row track-table-grid grid w-full px-3 py-4 text-left transition',
+          shouldThemeRow ? 'track-row-themed' : '',
           isPlaying ? 'track-row-playing' : '',
         ].join(' ')}
+        style={themedRowStyle}
       >
         <div className="flex min-w-0 items-center gap-3">
           <img
@@ -202,7 +229,7 @@ function TrackRow({
               onPlay()
             }}
             className={[
-              'tooltip-anchor track-row-control track-row-play-button group grid h-8 w-8 shrink-0 place-items-center rounded-full border text-xs transition',
+              'tooltip-anchor track-row-control track-row-artwork-control track-row-play-button group grid h-8 w-8 shrink-0 place-items-center rounded-full border text-xs transition',
               isPlaying || isPlaybackLoading
                 ? 'track-row-control-active border-zinc-900 bg-zinc-900 text-white'
                 : 'border-zinc-200 bg-white text-zinc-500 hover:border-zinc-400 hover:text-zinc-900',
@@ -230,15 +257,15 @@ function TrackRow({
                 {titleParts.meta}
               </p>
             )}
-            <p className="mt-0.5 truncate text-xs text-zinc-400 md:hidden">{track.artist}</p>
+            <p className="track-row-artist mt-0.5 truncate text-xs text-zinc-400 md:hidden">{track.artist}</p>
           </div>
         </div>
 
-        <span className="hidden self-center truncate text-sm text-zinc-400 md:block">{track.artist}</span>
-        <span className="self-center text-sm tabular-nums text-zinc-400">{compactNumber(track.views)}</span>
+        <span className="track-row-artist hidden self-center truncate text-sm text-zinc-400 md:block">{track.artist}</span>
+        <span className="track-row-views self-center text-sm tabular-nums text-zinc-400">{compactNumber(track.views)}</span>
 
         <span className="self-center justify-self-end">
-          <span className={`inline-flex min-w-10 justify-end text-sm font-medium tabular-nums ${getGemScoreClass(track.gemScore)}`}>
+          <span className={`track-row-gem-score inline-flex min-w-10 justify-end text-sm font-medium tabular-nums ${getGemScoreClass(track.gemScore)}`}>
             {track.gemScore.toFixed(1)}
           </span>
         </span>

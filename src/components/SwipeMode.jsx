@@ -3,6 +3,7 @@ import { BsPauseFill, BsPlayFill } from 'react-icons/bs'
 import { publicAsset } from '../utils/assetUrl'
 import { getGenreFilterOptions } from '../utils/filterTracks'
 import { toRgba, useArtworkTheme } from '../hooks/useArtworkTheme'
+import ColorBends from '../reactbits/ColorBends'
 import GenreDropdown from './GenreDropdown'
 import PlaylistSaver from './PlaylistSaver'
 import TrackSearchLinks from './TrackSearchLinks'
@@ -15,9 +16,29 @@ const DEFAULT_GEM_REASON = 'Underground balance across views and engagement'
 const SKIP_ICON_SRC = publicAsset('images/x.png')
 const SAVE_ICON_SRC = publicAsset('images/heart.png')
 const GEM_ICON_SRC = publicAsset('images/diamond.png')
+const DARK_BEND_FALLBACK_COLORS = ['rgb(16, 185, 129)', 'rgb(34, 211, 238)', 'rgb(250, 204, 21)', 'rgb(244, 244, 245)']
+const LIGHT_BEND_FALLBACK_COLORS = ['rgb(20, 184, 166)', 'rgb(59, 130, 246)', 'rgb(250, 204, 21)', 'rgb(24, 24, 27)']
 
 function formatRate(value) {
   return `${(value * 100).toFixed(1)}%`
+}
+
+function mixRgbString(source, target, blend) {
+  const sourceValues = String(source).match(/\d+(?:\.\d+)?/g)
+  const targetValues = String(target).match(/\d+(?:\.\d+)?/g)
+
+  if (!sourceValues || sourceValues.length < 3 || !targetValues || targetValues.length < 3) {
+    return source
+  }
+
+  const ratio = Math.max(0, Math.min(Number(blend) || 0, 1))
+  const values = [0, 1, 2].map((index) => {
+    const sourceChannel = Number(sourceValues[index]) || 0
+    const targetChannel = Number(targetValues[index]) || 0
+    return Math.round(sourceChannel * (1 - ratio) + targetChannel * ratio)
+  })
+
+  return `rgb(${values[0]}, ${values[1]}, ${values[2]})`
 }
 
 function isShortcutEditableTarget(target) {
@@ -252,6 +273,32 @@ function SwipeMode({
   const themedCardBorderColor = dynamicTheme?.borderColor || 'rgba(228, 228, 231, 1)'
   const themedTextColor = dynamicTheme?.textColor || (isDarkMode ? 'rgb(255, 255, 255)' : 'rgb(24, 24, 27)')
   const themedMutedTextColor = dynamicTheme?.mutedTextColor || (isDarkMode ? 'rgb(212, 212, 216)' : 'rgb(113, 113, 122)')
+  const colorBendColors = useMemo(
+    () => {
+      if (!dynamicTheme) {
+        return isDarkMode ? DARK_BEND_FALLBACK_COLORS : LIGHT_BEND_FALLBACK_COLORS
+      }
+
+      if (isDarkMode) {
+        return [
+          mixRgbString(dynamicTheme.accentColor, 'rgb(255, 255, 255)', 0.24),
+          mixRgbString(dynamicTheme.textColor, dynamicTheme.accentColor, 0.16),
+          mixRgbString(dynamicTheme.surfaceColor, 'rgb(255, 255, 255)', 0.5),
+          mixRgbString(dynamicTheme.cardColor, dynamicTheme.accentColor, 0.34),
+          mixRgbString(dynamicTheme.mainColor, 'rgb(255, 255, 255)', 0.42),
+        ]
+      }
+
+      return [
+        dynamicTheme.accentColor,
+        dynamicTheme.mainColor,
+        dynamicTheme.surfaceColor,
+        mixRgbString(dynamicTheme.cardColor, 'rgb(255, 255, 255)', 0.2),
+        mixRgbString(dynamicTheme.textColor, dynamicTheme.accentColor, 0.16),
+      ]
+    },
+    [dynamicTheme, isDarkMode],
+  )
 
   const articleStyle = dynamicTheme
     ? {
@@ -559,11 +606,36 @@ function SwipeMode({
 
       <article
         className={[
-          'swipe-workspace mx-auto grid min-h-0 flex-1 w-full max-w-7xl grid-cols-1 gap-3 rounded-2xl border p-2 md:grid-cols-[18rem_minmax(24rem,1fr)_20rem] md:p-3',
+          'swipe-workspace relative isolate mx-auto grid min-h-0 flex-1 w-full max-w-7xl grid-cols-1 gap-3 rounded-2xl border p-2 md:grid-cols-[18rem_minmax(24rem,1fr)_20rem] md:p-3',
           darkFallbackActive ? 'border-white/15 bg-black/50' : 'border-zinc-200 bg-zinc-50',
         ].join(' ')}
         style={articleStyle}
       >
+        <div className="swipe-workspace-bends pointer-events-none absolute inset-0 z-0" aria-hidden="true">
+          <ColorBends
+            className="h-full w-full"
+            colors={colorBendColors}
+            rotation={125}
+            speed={0.16}
+            transparent={!isDarkMode}
+            autoRotate={0.4}
+            scale={0.95}
+            frequency={0.82}
+            warpStrength={1.05}
+            mouseInfluence={0.22}
+            parallax={0.18}
+            noise={0.2}
+            iterations={4}
+            intensity={isDarkMode ? 1.85 : 2.15}
+            bandWidth={isDarkMode ? 6.8 : 8.4}
+            style={{
+              opacity: isDarkMode ? 0.82 : 0.66,
+              mixBlendMode: isDarkMode ? 'screen' : 'normal',
+              filter: isDarkMode ? 'saturate(1.55) contrast(1.16)' : 'saturate(1.85) contrast(1.22)',
+            }}
+          />
+        </div>
+
         <div className="swipe-left-panel relative z-10 flex min-h-0 flex-col gap-2 overflow-hidden">
           <div className="grid grid-cols-2 gap-2 text-sm md:grid-cols-1">
             <div className="rounded-xl border p-2.5" style={themedBoxStyle}>

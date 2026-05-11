@@ -523,11 +523,37 @@
   }
 
   .track-row-themed {
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
     background: var(--track-row-bg);
+  }
+
+  .track-row-themed::before {
+    content: '';
+    position: absolute;
+    inset: -0.85rem;
+    z-index: 0;
+    background: var(--track-row-artwork);
+    background-position: center;
+    background-size: cover;
+    opacity: var(--track-row-artwork-opacity);
+    filter: blur(18px) saturate(1.5) contrast(1.08);
+    transform: scale(1.08);
+    transition: opacity 160ms ease;
+  }
+
+  .track-row-themed > * {
+    position: relative;
+    z-index: 1;
   }
 
   .track-row-themed:not(.track-row-playing):hover {
     background: var(--track-row-hover-bg);
+  }
+
+  .track-row-themed:not(.track-row-playing):hover::before {
+    opacity: var(--track-row-artwork-hover-opacity);
   }
 
   .track-row-playing {
@@ -546,10 +572,22 @@
     color: var(--track-row-muted);
   }
 
-  .track-row-themed .track-row-control {
+  .track-row-themed .track-row-artist,
+  .track-row-themed .track-row-views,
+  .track-row-themed .track-row-gem-score {
+    color: var(--track-row-muted);
+  }
+
+  .track-row-themed .track-row-artwork-control {
     border-color: var(--track-row-control-border);
     background: var(--track-row-control-bg);
     color: var(--track-row-control-text);
+  }
+
+  .track-row-themed .track-row-artwork-control.track-row-control-active {
+    border-color: var(--track-row-control-active-bg);
+    background: var(--track-row-control-active-bg);
+    color: var(--track-row-control-active-text);
   }
 
   .track-title-stack {
@@ -1119,6 +1157,10 @@
     overflow: hidden;
   }
 
+  .swipe-workspace-bends {
+    overflow: hidden;
+  }
+
   .swipe-stage {
     max-height: 100%;
   }
@@ -1431,11 +1473,27 @@
     color: var(--track-row-muted);
   }
 
-  .theme-dark .track-row-themed .track-row-control,
-  .theme-dark-chrome .track-row-themed .track-row-control {
+  .theme-dark .track-row-themed .track-row-artist,
+  .theme-dark-chrome .track-row-themed .track-row-artist,
+  .theme-dark .track-row-themed .track-row-views,
+  .theme-dark-chrome .track-row-themed .track-row-views,
+  .theme-dark .track-row-themed .track-row-gem-score,
+  .theme-dark-chrome .track-row-themed .track-row-gem-score {
+    color: var(--track-row-muted) !important;
+  }
+
+  .theme-dark .track-row-themed .track-row-artwork-control,
+  .theme-dark-chrome .track-row-themed .track-row-artwork-control {
     border-color: var(--track-row-control-border) !important;
     background: var(--track-row-control-bg) !important;
     color: var(--track-row-control-text) !important;
+  }
+
+  .theme-dark .track-row-themed .track-row-artwork-control.track-row-control-active,
+  .theme-dark-chrome .track-row-themed .track-row-artwork-control.track-row-control-active {
+    border-color: var(--track-row-control-active-bg) !important;
+    background: var(--track-row-control-active-bg) !important;
+    color: var(--track-row-control-active-text) !important;
   }
 
   .theme-dark .input-select,

@@ -7,6 +7,7 @@ function TrackTable({
   currentTrackId,
   isPlaying,
   playbackLoadingTrackId,
+  isDarkMode = false,
   likedTrackIds = [],
   onLikeTrack,
   onRemoveFromLiked,
@@ -58,6 +59,7 @@ function TrackTable({
                 track={track}
                 isPlaying={isPlaying && currentTrackId === track.id}
                 isPlaybackLoading={playbackLoadingTrackId === track.id}
+                isDarkMode={isDarkMode}
                 isLiked={likedTrackIdSet.has(track.id)}
                 onLikeTrack={onLikeTrack}
                 onRemoveFromLiked={onRemoveFromLiked}
