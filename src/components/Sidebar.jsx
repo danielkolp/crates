@@ -70,6 +70,11 @@ function estimateTrackBpm(track) {
   return 118 + (hashText(track?.youtubeVideoId || track?.id || 'track') % 18)
 }
 
+function isKeyboardEditableTarget(target) {
+  if (!(target instanceof HTMLElement)) return false
+  return Boolean(target.closest('input, textarea, select, [contenteditable="true"]'))
+}
+
 function Sidebar({
   activeScreen,
   onScreenChange,
@@ -86,6 +91,7 @@ function Sidebar({
   const smoothImpactRef = useRef(0)
   const beatClockRef = useRef({ bpm: 124, phaseOffset: 0 })
   const [seedCopied, setSeedCopied] = useState(false)
+  const [isSetSeedVisible, setIsSetSeedVisible] = useState(false)
   const seedCopyTimerRef = useRef(0)
   const displaySeed = String(crateSeed || '').trim()
 
@@ -136,6 +142,31 @@ function Sidebar({
     if (seedCopyTimerRef.current) {
       window.clearTimeout(seedCopyTimerRef.current)
     }
+  }, [])
+
+  useEffect(() => {
+    function handleSetSeedReveal(event) {
+      if (
+        event.repeat ||
+        !event.altKey ||
+        !event.shiftKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        isKeyboardEditableTarget(event.target)
+      ) {
+        return
+      }
+
+      if (event.key.toLowerCase() !== 's') {
+        return
+      }
+
+      event.preventDefault()
+      setIsSetSeedVisible((isVisible) => !isVisible)
+    }
+
+    window.addEventListener('keydown', handleSetSeedReveal)
+    return () => window.removeEventListener('keydown', handleSetSeedReveal)
   }, [])
 
   useEffect(() => {
@@ -269,13 +300,15 @@ function Sidebar({
                 regen
               </button>
 
-              <button
-                type="button"
-                onClick={onSetSeed}
-                className="mono shrink-0 rounded border border-zinc-300 px-1.5 py-0.5 text-[10px] font-medium lowercase leading-4 text-zinc-500 transition hover:border-zinc-900 hover:bg-zinc-900 hover:text-white"
-              >
-                set seed
-              </button>
+              {isSetSeedVisible && (
+                <button
+                  type="button"
+                  onClick={onSetSeed}
+                  className="mono shrink-0 rounded border border-zinc-300 px-1.5 py-0.5 text-[10px] font-medium lowercase leading-4 text-zinc-500 transition hover:border-zinc-900 hover:bg-zinc-900 hover:text-white"
+                >
+                  set seed
+                </button>
+              )}
             </div>
           </div>
         </div>
