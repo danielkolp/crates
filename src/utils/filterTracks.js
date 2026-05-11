@@ -25,7 +25,7 @@ const DEFAULT_OPTIONS = {
   digDeeperMatchMode: 'any',
 }
 
-const DIVERSITY_PENALTY_STEP = 0.25
+const DIVERSITY_PENALTY_STEP = 0.45
 
 function clamp(value, min, max) {
   const numeric = Number(value)

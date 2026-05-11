@@ -1,6 +1,7 @@
-// youtubeClient.js - handles searching YouTube for music tracks, normalizing results,
-// and applying quality filters. Uses YouTube Data API v3 only.
+// this file talks to youtube, turns api videos into app tracks, and ranks them for discovery.
+// it only uses the youtube data api v3.
 
+// these imports score tracks, filter noisy results, and read music/style metadata from track text.
 import { attachGemScores, getGemReasons, getTrackQualityScore } from '../utils/gemScore'
 import {
   filterTracks,
@@ -13,9 +14,11 @@ import {
   isLikelyShort,
 } from '../utils/filterTracks'
 
+// these flags control local debug output and quota logging.
 const DEV = import.meta.env.DEV
 const QUOTA_DEBUG = DEV || import.meta.env.VITE_YOUTUBE_QUOTA_DEBUG === 'true'
 
+// these caches keep repeated api calls cheap during a browser session.
 const searchCache = new Map()
 const searchResultCache = new Map()
 const videoDetailsCache = new Map()
@@ -25,25 +28,29 @@ const channelBatchCache = new Map()
 const playlistItemsCache = new Map()
 const requestInFlightCache = new Map()
 
+// these youtube error reason codes mean the daily quota is gone.
 const YOUTUBE_DAILY_QUOTA_REASONS = new Set([
   'quotaExceeded',
   'dailyLimitExceeded',
   'dailyLimitExceededUnreg',
 ])
 
+// these values decide how much youtube data to request for each discovery pass.
 const SEED_QUERY_COUNT = 6
 const YOUTUBE_RESULTS_PER_QUERY = 12
 const YOUTUBE_VIDEO_DETAILS_BATCH_SIZE = 50
 const YOUTUBE_CHANNEL_DETAILS_BATCH_SIZE = 50
 const YOUTUBE_DISCOVERY_MAX_VIDEO_IDS = SEED_QUERY_COUNT * YOUTUBE_RESULTS_PER_QUERY
 const YOUTUBE_CHANNEL_EXPANSION_LIMIT = 6
-const YOUTUBE_UPLOADS_PER_CHANNEL = 8
+const YOUTUBE_UPLOADS_PER_CHANNEL = 3
+const CHANNEL_EXPANSION_ACCEPTED_RESULT_FLOOR = 6
 const PREVIOUS_EAGER_SEARCH_LIST_COUNT = SEED_QUERY_COUNT
 const MINIMAL_METADATA_RELEASE_GEM_BOOST = 0.35
 const DEFAULT_NUMERIC_SEED = '10000000'
 const DISCOVERY_YEAR_START = 2012
 const DISCOVERY_YEAR_END = 2026
 
+// these are approximate youtube api quota costs used for the local quota estimate.
 const YOUTUBE_QUOTA_COSTS = {
   search: 100,
   videos: 1,
@@ -51,12 +58,14 @@ const YOUTUBE_QUOTA_COSTS = {
   playlistItems: 1,
 }
 
+// these cache lifetimes balance freshness with quota savings.
 const TRACK_RESULT_CACHE_TTL_MS = 30 * 60 * 1000
 const SEARCH_RESULT_CACHE_TTL_MS = 6 * 60 * 60 * 1000
 const VIDEO_DETAILS_CACHE_TTL_MS = 12 * 60 * 60 * 1000
 const CHANNEL_METADATA_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const PLAYLIST_ITEMS_CACHE_TTL_MS = 30 * 60 * 1000
 
+// these field lists ask youtube for only the data this app actually needs.
 const YOUTUBE_SEARCH_FIELDS =
   'etag,items(id/videoId,snippet(channelId,channelTitle,title,publishedAt))'
 const YOUTUBE_VIDEOS_FIELDS =
@@ -67,11 +76,13 @@ const YOUTUBE_PLAYLIST_ITEMS_FIELDS =
   'etag,items(snippet(resourceId/videoId))'
 const QUOTA_USAGE_STORAGE_KEY = 'crateDigger.youtubeQuotaUsageEstimate'
 
+// this descending year list is used to build seeded discovery windows.
 const DISCOVERY_YEARS = Array.from(
   { length: DISCOVERY_YEAR_END - DISCOVERY_YEAR_START + 1 },
   (_, index) => String(DISCOVERY_YEAR_END - index),
 )
 
+// these are the broad default styles used when the user has not picked a style.
 const DISCOVERY_STYLES = [
   'uk garage',
   '2 step garage',
@@ -91,6 +102,7 @@ const DISCOVERY_STYLES = [
   'ambient',
 ]
 
+// these words push searches toward actual track uploads instead of general videos.
 const TRACK_VERSION_TERMS = [
   'original mix',
   'extended mix',
@@ -98,12 +110,14 @@ const TRACK_VERSION_TERMS = [
   'club mix',
 ]
 
+// these extra version words are mixed into some searches for variety.
 const OCCASIONAL_TRACK_VERSION_TERMS = [
   'extended mix',
   'dub mix',
   'club mix',
 ]
 
+// these terms make queries prefer direct track pages and official audio uploads.
 const TRACK_FIRST_QUERY_FORMATS = [
   'official audio',
   'provided to youtube',
@@ -118,11 +132,13 @@ const TRACK_FIRST_QUERY_FORMATS = [
   'b side',
 ]
 
+// this is the full pool of format words used for seeded queries.
 const DISCOVERY_FORMATS = [
   ...TRACK_FIRST_QUERY_FORMATS,
   ...OCCASIONAL_TRACK_VERSION_TERMS,
 ]
 
+// these words bias discovery toward underground and independent music results.
 const DISCOVERY_CONTEXTS = [
   'underground',
   'rare',
@@ -136,6 +152,7 @@ const DISCOVERY_CONTEXTS = [
   'self released',
 ]
 
+// these words add flavor and extra specificity to seeded youtube searches.
 const DISCOVERY_QUERY_ACCENTS = [
   'deep cut',
   'low views',
@@ -149,6 +166,7 @@ const DISCOVERY_QUERY_ACCENTS = [
   'upload',
 ]
 
+// these paired terms describe the intent of a search query.
 const DISCOVERY_INTENT_GROUPS = [
   ['official audio', 'single'],
   ['provided to youtube', 'topic'],
@@ -160,6 +178,7 @@ const DISCOVERY_INTENT_GROUPS = [
   ['vinyl', 'white label'],
 ]
 
+// these special queries target youtube's official release metadata patterns.
 const RELEASE_PATTERN_QUERIES = [
   'provided to youtube by topic official audio',
   'auto-generated by youtube released on track',
@@ -171,6 +190,7 @@ const RELEASE_PATTERN_QUERIES = [
   'released on topic track',
 ]
 
+// these groups map one selected style to several youtube-friendly search phrases.
 const STYLE_VARIANT_GROUPS = [
   {
     aliases: ['uk garage', 'ukg', 'garage'],
@@ -248,6 +268,7 @@ const STYLE_VARIANT_GROUPS = [
   },
 ]
 
+// this is the flattened list of every style phrase the query builder can choose from.
 const ALL_DISCOVERY_STYLE_VARIANTS = [
   ...new Set([
     ...DISCOVERY_STYLES,
@@ -255,6 +276,7 @@ const ALL_DISCOVERY_STYLE_VARIANTS = [
   ]),
 ]
 
+// these fallback searches are used when no specific query can be built.
 const SEARCH_DEFAULTS = [
   'underground uk garage full track',
   '2 step garage vinyl',
@@ -263,6 +285,7 @@ const SEARCH_DEFAULTS = [
   'breaks dub track',
 ]
 
+// these words are appended to queries to keep results focused on music.
 const MUSIC_INTENT_APPEND = [
   'official audio',
   'provided to youtube',
@@ -276,6 +299,7 @@ const MUSIC_INTENT_APPEND = [
   'premiere',
 ]
 
+// these optional intent words are mixed into seeded queries for variety.
 const OPTIONAL_INTENT = [
   'official audio',
   'topic',
@@ -286,6 +310,7 @@ const OPTIONAL_INTENT = [
   'original mix',
 ]
 
+// these patterns reject videos that clearly are not music tracks.
 const HARD_NON_MUSIC_PATTERNS = [
   { label: 'tutorial', pattern: /\btutorial\b|\bhow to\b|\blesson\b|\bwalkthrough\b/i },
   { label: 'production-tutorial', pattern: /\bableton\b|\bfl studio\b|\bmixing tutorial\b|\bmastering tutorial\b/i },
@@ -297,6 +322,7 @@ const HARD_NON_MUSIC_PATTERNS = [
   { label: 'game-content', pattern: /\bminecraft\b|\broblox\b|\bfortnite\b/i },
 ]
 
+// these regexes catch long mixes, bad release contexts, release metadata, and track versions.
 const HARD_LONG_FORM_TITLE_PATTERN =
   /\b(?:dj\s*set|live\s*set|radio\s*show|podcast|compilation|playlist|boiler\s*room|essential\s*mix|mixmag|hour\s*mix|full\s*mix)\b/i
 
@@ -334,18 +360,21 @@ const EXCLUDE_TERMS = [
   '-"radio show"',
 ]
 
+// this stores the last search state so the app can show a useful status message.
 let lastSearchStatus = {
   source: 'youtube',
   usedFallback: false,
   message: 'Ready for live YouTube search.',
 }
 
+// this pauses async work for small delays such as empty api-key fallback behavior.
 function wait(ms) {
   return new Promise((resolve) => {
     window.setTimeout(resolve, ms)
   })
 }
 
+// this returns a random integer and uses crypto when the browser exposes it.
 function getEntropyInt(maxExclusive) {
   const max = Math.max(Number(maxExclusive) || 1, 1)
 
@@ -363,6 +392,7 @@ function getEntropyInt(maxExclusive) {
   return Math.abs(fallback) % max
 }
 
+// this creates a fresh numeric seed for repeatable discovery.
 export function createNumericSeed() {
   const length = 8 + getEntropyInt(9)
   const digits = [String(1 + getEntropyInt(9))]
@@ -374,6 +404,7 @@ export function createNumericSeed() {
   return digits.join('')
 }
 
+// this cleans any seed-like input into a stable numeric seed string.
 export function normalizeNumericSeed(seed = DEFAULT_NUMERIC_SEED) {
   const rawValue =
     typeof seed === 'object' && seed
@@ -393,6 +424,7 @@ export function normalizeNumericSeed(seed = DEFAULT_NUMERIC_SEED) {
   return digits.slice(0, 16)
 }
 
+// this turns a seed string into a deterministic integer hash.
 function hashSeed(seed) {
   const value = String(seed || DEFAULT_NUMERIC_SEED)
   let hash = 2166136261
@@ -405,6 +437,7 @@ function hashSeed(seed) {
   return hash >>> 0
 }
 
+// this returns a deterministic random number generator for a seed.
 export function createSeededRandom(seed = DEFAULT_NUMERIC_SEED) {
   let state = hashSeed(seed) || 0x6d2b79f5
 
@@ -419,6 +452,7 @@ export function createSeededRandom(seed = DEFAULT_NUMERIC_SEED) {
   }
 }
 
+// this picks one item from an array using the seeded random generator.
 export function seededPick(array = [], rng = createSeededRandom()) {
   if (!Array.isArray(array) || array.length === 0) {
     return undefined
@@ -428,6 +462,7 @@ export function seededPick(array = [], rng = createSeededRandom()) {
   return array[Math.min(index, array.length - 1)]
 }
 
+// this shuffles an array without changing the original array.
 export function seededShuffle(array = [], rng = createSeededRandom()) {
   const next = [...array]
 
@@ -439,22 +474,25 @@ export function seededShuffle(array = [], rng = createSeededRandom()) {
   return next
 }
 
+// this reads the youtube api key from vite environment variables.
 function getApiKey() {
   return import.meta.env.VITE_YOUTUBE_API_KEY || ''
 }
 
+// this safely returns local storage when the browser allows access.
 function getSafeLocalStorage() {
   try {
     if (typeof window !== 'undefined' && window.localStorage) {
       return window.localStorage
     }
   } catch {
-    // Ignore storage access failures.
+    // ignore storage access failures.
   }
 
   return null
 }
 
+// this returns today's date key for quota tracking.
 function getQuotaDateKey() {
   const now = new Date()
   const month = String(now.getMonth() + 1).padStart(2, '0')
@@ -463,6 +501,7 @@ function getQuotaDateKey() {
   return `${now.getFullYear()}-${month}-${day}`
 }
 
+// this loads the saved quota estimate and resets it on a new day.
 function readStoredQuotaUsage() {
   const today = getQuotaDateKey()
   const storage = getSafeLocalStorage()
@@ -492,8 +531,10 @@ function readStoredQuotaUsage() {
   }
 }
 
+// this holds quota estimates for the current browser session.
 let quotaUsage = readStoredQuotaUsage()
 
+// this writes the quota estimate back to local storage.
 function persistQuotaUsage() {
   const storage = getSafeLocalStorage()
 
@@ -510,10 +551,11 @@ function persistQuotaUsage() {
       }),
     )
   } catch {
-    // Ignore quota estimate persistence failures.
+    // ignore quota estimate persistence failures.
   }
 }
 
+// this records estimated youtube quota use and logs it in debug mode.
 function recordQuotaUsage({ endpoint, cost, requestKey, cacheStatus = 'network' }) {
   const estimatedCost = Number(cost || 0)
 
@@ -556,6 +598,7 @@ function recordQuotaUsage({ endpoint, cost, requestKey, cacheStatus = 'network' 
   console.info('[CrateDigger][youtube][quota] request', logPayload)
 }
 
+// this logs when a request was avoided by a cache hit.
 function logQuotaCacheHit(label, key) {
   if (!QUOTA_DEBUG) {
     return
@@ -570,6 +613,7 @@ function logQuotaCacheHit(label, key) {
   })
 }
 
+// this returns cached data only while it is still fresh.
 function getFreshCacheEntry(cache, key) {
   const entry = cache.get(key)
 
@@ -580,10 +624,12 @@ function getFreshCacheEntry(cache, key) {
   return entry
 }
 
+// this returns cached data even if it is expired.
 function getStaleCacheEntry(cache, key) {
   return cache.get(key) || null
 }
 
+// this stores data with an expiry time and optional etag.
 function setCacheEntry(cache, key, data, ttlMs, etag = '') {
   const now = Date.now()
 
@@ -595,6 +641,7 @@ function setCacheEntry(cache, key, data, ttlMs, etag = '') {
   })
 }
 
+// this wraps a fetch with fresh cache, stale etag support, and in-flight request reuse.
 async function getOrFetchCached(cache, key, ttlMs, fetcher, options = {}) {
   const label = options.label || 'youtube request'
   const freshEntry = getFreshCacheEntry(cache, key)
@@ -632,6 +679,7 @@ async function getOrFetchCached(cache, key, ttlMs, fetcher, options = {}) {
   }
 }
 
+// this builds a safe request key for logs without exposing the api key.
 function buildRequestLogKey(url) {
   try {
     const requestUrl = new URL(url)
@@ -643,11 +691,13 @@ function buildRequestLogKey(url) {
   }
 }
 
+// this extracts a valid 11 character youtube video id from loose text.
 function cleanYouTubeVideoId(value) {
   const match = String(value || '').match(/[a-zA-Z0-9_-]{11}/)
   return match?.[0] || ''
 }
 
+// this reads a video id from a raw id, app id, or youtube url.
 function extractYouTubeVideoId(value) {
   const raw = String(value || '').trim().replace(/^yt-/, '')
 
@@ -681,6 +731,7 @@ function extractYouTubeVideoId(value) {
   }
 }
 
+// this updates the status object that the app reads after searches.
 function setSearchStatus(source, usedFallback, message, details = {}) {
   lastSearchStatus = {
     source,
@@ -690,10 +741,12 @@ function setSearchStatus(source, usedFallback, message, details = {}) {
   }
 }
 
+// this exposes the latest search status to the app.
 export function getLastSearchStatus() {
   return lastSearchStatus
 }
 
+// this pulls youtube error reason codes out of an api error response.
 function getYouTubeErrorReasons(data) {
   const reasons = Array.isArray(data?.error?.errors)
     ? data.error.errors.map((item) => item?.reason).filter(Boolean)
@@ -706,10 +759,12 @@ function getYouTubeErrorReasons(data) {
   return reasons
 }
 
+// this checks whether a youtube reason code means daily quota is exhausted.
 function isYouTubeDailyQuotaReason(reason) {
   return YOUTUBE_DAILY_QUOTA_REASONS.has(String(reason || '').trim())
 }
 
+// this checks whether an error object represents daily youtube quota exhaustion.
 export function isYouTubeDailyQuotaError(error) {
   if (error?.isDailyQuotaExceeded) {
     return true
@@ -718,10 +773,12 @@ export function isYouTubeDailyQuotaError(error) {
   return isYouTubeDailyQuotaReason(error?.quotaReason || error?.reason)
 }
 
+// this normalizes arrays before they become part of cache keys.
 function normalizeCacheList(values = []) {
   return [...values].map((value) => String(value).toLowerCase()).sort()
 }
 
+// this makes text comparable by lowering case and removing punctuation noise.
 function normalizeDiscoveryText(value = '') {
   return String(value || '')
     .trim()
@@ -732,10 +789,12 @@ function normalizeDiscoveryText(value = '') {
     .trim()
 }
 
+// this removes empty and repeated discovery terms while preserving order.
 function uniqueDiscoveryValues(values = []) {
   return [...new Set(values.map((value) => String(value || '').trim()).filter(Boolean))]
 }
 
+// this picks the active style from filters, falling back to genre.
 function getSelectedDiscoveryStyle(filters = {}) {
   const selectedStyle =
     filters.style && filters.style !== 'all'
@@ -747,6 +806,7 @@ function getSelectedDiscoveryStyle(filters = {}) {
   return String(selectedStyle || '').trim()
 }
 
+// this finds known search variants for a selected style.
 function getKnownStyleVariants(style) {
   const normalizedStyle = normalizeDiscoveryText(style)
 
@@ -761,6 +821,7 @@ function getKnownStyleVariants(style) {
   return variantGroup?.variants || []
 }
 
+// this builds the style phrase pool for the current filters.
 function getStyleVariantPool(filters = {}) {
   const selectedStyle = getSelectedDiscoveryStyle(filters)
 
@@ -782,6 +843,7 @@ function getStyleVariantPool(filters = {}) {
   ])
 }
 
+// this turns a seed year and span into youtube published-after and published-before dates.
 function buildSeedUploadWindow(year, spanYears = 1) {
   const numericYear = Number(year)
   const numericSpan = Math.max(Number(spanYears) || 1, 1)
@@ -805,6 +867,7 @@ function buildSeedUploadWindow(year, spanYears = 1) {
   }
 }
 
+// this turns a seed into the style, format, context, year, and upload window for discovery.
 export function buildSeedProfile(seed = DEFAULT_NUMERIC_SEED, filters = {}) {
   const numericSeed = normalizeNumericSeed(seed)
   const rng = createSeededRandom(`${numericSeed}:profile`)
@@ -831,6 +894,7 @@ export function buildSeedProfile(seed = DEFAULT_NUMERIC_SEED, filters = {}) {
   }
 }
 
+// this creates the full seed profile and query plan used by the app.
 export function createDiscoverySeed(seedOrFilters, maybeFilters = {}) {
   const firstArgLooksLikeFilters =
     seedOrFilters &&
@@ -852,10 +916,12 @@ export function createDiscoverySeed(seedOrFilters, maybeFilters = {}) {
   }
 }
 
+// this gets the stable numeric part of a discovery seed for cache keys.
 function getDiscoverySeedKey(discoverySeed) {
   return normalizeNumericSeed(discoverySeed)
 }
 
+// this reads which query-plan slot should be loaded next.
 function getDiscoveryQueueIndex(filters = {}) {
   const index = Number(filters.discoveryQueueIndex ?? 0)
 
@@ -866,11 +932,23 @@ function getDiscoveryQueueIndex(filters = {}) {
   return Math.floor(index)
 }
 
+// this builds the discovery seed object for a specific search query.
+function createDiscoverySeedForQuery(seed, query = '', filters = {}) {
+  const seedProfile = buildSeedProfile(seed, filters)
+  const queryPlan = buildSeededSearchQueries(query, filters, seedProfile)
+
+  return {
+    ...seedProfile,
+    queryPlan,
+  }
+}
+
+// this builds the cache key for a full search request.
 function buildSearchKey(query, filters = {}) {
   return JSON.stringify({
     query: String(query || '').trim().toLowerCase(),
-    // The discovery seed already controls refresh variety. Excluding refreshKey
-    // prevents repeated API work when the same seed/query/filter set is retried.
+    // the discovery seed already controls refresh variety. excluding refreshkey
+    // prevents repeated api work when the same seed, query, and filter set is retried.
     discoverySeed: getDiscoverySeedKey(filters.discoverySeed),
     discoveryQueueIndex: getDiscoveryQueueIndex(filters),
     seedQueryCount: SEED_QUERY_COUNT,
@@ -893,6 +971,7 @@ function buildSearchKey(query, filters = {}) {
   })
 }
 
+// this parses youtube iso duration strings into seconds and a display label.
 function parseYouTubeDuration(duration = '') {
   const match = duration.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/i)
 
@@ -913,6 +992,7 @@ function parseYouTubeDuration(duration = '') {
   }
 }
 
+// this makes deterministic fake waveform bars from a video id.
 function buildWaveformSeed(youtubeVideoId) {
   const length = 24
   const seed = String(youtubeVideoId || 'seed')
@@ -927,10 +1007,12 @@ function buildWaveformSeed(youtubeVideoId) {
   return values
 }
 
+// this counts hashtags in youtube title or description text.
 function countHashtags(text = '') {
   return (String(text).match(/#[\w-]+/g) || []).length
 }
 
+// this detects titles that are mostly emoji noise.
 function emojiHeavyTitle(title = '') {
   const value = String(title)
   const emojiLike = (value.match(/[\u{1F300}-\u{1FAFF}\u2600-\u27BF]/gu) || []).length
@@ -939,6 +1021,7 @@ function emojiHeavyTitle(title = '') {
   return emojiLike > 4 && emojiLike > alnum
 }
 
+// this counts common promotional words that make a result less trustworthy.
 function promoWordCount(text = '') {
   const promoWords = ['bio', 'viral', 'subscribe', 'follow', 'new song', 'newsong']
   const normalized = String(text).toLowerCase()
@@ -946,6 +1029,7 @@ function promoWordCount(text = '') {
   return promoWords.reduce((count, word) => count + (normalized.includes(word) ? 1 : 0), 0)
 }
 
+// this gets duration from normalized seconds or from youtube's duration text.
 function getTrackDurationSeconds(track) {
   const directDuration = Number(track?.durationSeconds)
 
@@ -956,6 +1040,7 @@ function getTrackDurationSeconds(track) {
   return parseYouTubeDuration(String(track?.duration || '')).seconds
 }
 
+// this checks if a long-looking title is still probably a single track.
 function titleClearlyLooksLikeSingleTrack(title = '') {
   const normalizedTitle = String(title || '').trim()
 
@@ -977,6 +1062,7 @@ function titleClearlyLooksLikeSingleTrack(title = '') {
   )
 }
 
+// this rejects long mixes and sets so the app favors individual tracks.
 export function isLikelyLongFormMix(track) {
   const title = String(track?.title || '')
   const durationSeconds = getTrackDurationSeconds(track)
@@ -996,10 +1082,12 @@ export function isLikelyLongFormMix(track) {
   return false
 }
 
+// this chooses a small deterministic set of terms from a pool.
 function getSeededTerms(values = [], rng, limit = 2) {
   return seededShuffle(values, rng).slice(0, limit).filter(Boolean)
 }
 
+// this builds the format terms available to a seeded search.
 function getSeededQueryFormatPool(seedProfile, filters, rng) {
   const selectedFormat = filters.format && filters.format !== 'all' ? filters.format : ''
   const occasionalTrackVersion = seededPick(OCCASIONAL_TRACK_VERSION_TERMS, rng)
@@ -1012,6 +1100,7 @@ function getSeededQueryFormatPool(seedProfile, filters, rng) {
   ])
 }
 
+// this assembles one youtube search query from the seed, filters, and query plan item.
 function buildYouTubeQuery(query, filters = {}, seedProfile = buildSeedProfile(filters.discoverySeed, filters), queryPlanItem = {}) {
   const parts = []
   const rng = createSeededRandom(`${seedProfile.numericSeed}:query:${queryPlanItem.index ?? 0}`)
@@ -1101,6 +1190,7 @@ function buildYouTubeQuery(query, filters = {}, seedProfile = buildSeedProfile(f
     .trim()
 }
 
+// this builds the list of youtube queries that one seed can load over time.
 export function buildSeededSearchQueries(query = '', filters = {}, seedProfile = buildSeedProfile(filters.discoverySeed, filters)) {
   const rng = createSeededRandom(`${seedProfile.numericSeed}:queries`)
   const styles = seededShuffle(seedProfile.styleVariants?.length ? seedProfile.styleVariants : getStyleVariantPool(filters), rng)
@@ -1156,15 +1246,18 @@ export function buildSeededSearchQueries(query = '', filters = {}, seedProfile =
   return queryPlan
 }
 
+// this returns the first hard reject pattern found in a video's text.
 function findHardNonMusicPattern(title = '', description = '', channel = '') {
   const haystack = `${title} ${description} ${channel}`
   return HARD_NON_MUSIC_PATTERNS.find(({ pattern }) => pattern.test(haystack)) || null
 }
 
+// this increments a reject reason counter for debug summaries.
 function incrementReason(map, reason) {
   map.set(reason, (map.get(reason) || 0) + 1)
 }
 
+// this removes youtube's topic suffix from auto-generated artist names.
 function stripTopicSuffix(name = '') {
   const normalized = String(name || '').trim()
 
@@ -1176,14 +1269,17 @@ function stripTopicSuffix(name = '') {
   return withoutTopicSuffix || normalized
 }
 
+// this normalizes a tag before storing it on a track.
 function normalizeTag(value) {
   return String(value ?? '').trim().toLowerCase()
 }
 
+// this combines the searchable text used to detect style names in metadata.
 function getMetadataTextForStyle({ title = '', description = '', channelTitle = '', tags = [] } = {}) {
   return normalizeDiscoveryText(`${title} ${description} ${channelTitle} ${tags.join(' ')}`)
 }
 
+// this checks if a selected style or one of its aliases appears in video metadata.
 function styleMatchesMetadata(style, metadataText) {
   const normalizedStyle = normalizeDiscoveryText(style)
 
@@ -1206,6 +1302,7 @@ function styleMatchesMetadata(style, metadataText) {
   })
 }
 
+// this decides whether a track style came from metadata or only from the query that found it.
 function getStyleAttribution({
   metadataStyles = [],
   metadataText = '',
@@ -1254,6 +1351,7 @@ function getStyleAttribution({
   }
 }
 
+// this reads youtube metadata clues that make a video look like a real music release.
 export function getReleaseMetadataSignals(track = {}) {
   const title = String(track?.title || '')
   const description = String(track?.description || '')
@@ -1270,6 +1368,8 @@ export function getReleaseMetadataSignals(track = {}) {
   const categoryId = Number(track?.categoryId || 0)
   const fullText = `${title} ${description} ${channel}`
   const normalizedDescription = normalizeDiscoveryText(description)
+
+  // these booleans represent youtube release metadata patterns that are hard to fake by accident.
   const topicChannel = /\s[-\u2013\u2014]\s*topic\s*$/i.test(channel)
   const providedToYouTube = /\bprovided to youtube by\b/i.test(description)
   const autoGenerated = /\bauto-generated by youtube\b/i.test(description)
@@ -1283,6 +1383,8 @@ export function getReleaseMetadataSignals(track = {}) {
   const acceptableSingleDuration = durationSeconds >= 70 && durationSeconds <= 720
   const lowViews = Number(track?.views || 0) > 0 && Number(track.views) <= 25000
   const hardNonMusicPattern = findHardNonMusicPattern(title, description, channel)
+
+  // this prevents non-music, shorts, and long mixes from getting release boosts.
   const badContext =
     Boolean(hardNonMusicPattern) ||
     RELEASE_METADATA_BAD_CONTEXT_PATTERN.test(fullText) ||
@@ -1291,6 +1393,7 @@ export function getReleaseMetadataSignals(track = {}) {
   const signals = []
   let score = 0
 
+  // each signal adds a small amount of confidence that the upload is a clean release.
   if (topicChannel) {
     score += 1.3
     signals.push('topic-channel')
@@ -1344,6 +1447,7 @@ export function getReleaseMetadataSignals(track = {}) {
     signals.push(hardNonMusicPattern ? `blocked-${hardNonMusicPattern.label}` : 'blocked-non-release-context')
   }
 
+  // strong metadata means youtube itself is describing this as a released music upload.
   const hasStrongReleaseMetadata =
     topicChannel ||
     categoryId === 10 ||
@@ -1364,6 +1468,7 @@ export function getReleaseMetadataSignals(track = {}) {
   }
 }
 
+// this turns one youtube api video object into the track shape used by the app.
 function normalizeYouTubeVideo(video, filters = {}) {
   if (!video) {
     return null
@@ -1379,6 +1484,7 @@ function normalizeYouTubeVideo(video, filters = {}) {
   const queryPlanItem = filters.discoveryQueryPlanItem || {}
   const rawTags = Array.isArray(snippet.tags) ? snippet.tags : []
 
+  // selected style and vibe are kept when the query context can help describe a sparse upload.
   const selectedStyle =
     filters.style && filters.style !== 'all'
       ? filters.style
@@ -1388,6 +1494,7 @@ function normalizeYouTubeVideo(video, filters = {}) {
 
   const vibe = filters.vibe && filters.vibe !== 'all' ? filters.vibe : ''
 
+  // this is the base track before style labels, release signals, and normalized tags are attached.
   const normalizedTrack = {
     id: youtubeVideoId ? `yt-${youtubeVideoId}` : `yt-${snippet.channelId || snippet.title || 'unknown'}`,
     youtubeVideoId,
@@ -1414,6 +1521,7 @@ function normalizeYouTubeVideo(video, filters = {}) {
     embedUrl: youtubeVideoId ? `https://www.youtube.com/embed/${youtubeVideoId}` : '',
   }
 
+  // metadata labels are preferred over query labels when they are available.
   const metadataText = getMetadataTextForStyle({
     title: normalizedTrack.title,
     description: normalizedTrack.description,
@@ -1436,6 +1544,7 @@ function normalizeYouTubeVideo(video, filters = {}) {
   const releaseMetadataSignals = getReleaseMetadataSignals(normalizedTrack)
   const formats = getTrackFormatLabels(normalizedTrack)
 
+  // these tags merge youtube tags with app-level style and format tags.
   const enhancedTags = [
     ...rawTags,
     ...(filters.activeTags || []),
@@ -1459,6 +1568,7 @@ function normalizeYouTubeVideo(video, filters = {}) {
   }
 }
 
+// this rejects videos that look like shorts, mixes, spam, or non-music before scoring.
 function evaluateVideoQuality(track, filters = {}) {
   const title = String(track.title || '')
   const description = String(track.description || '')
@@ -1469,6 +1579,7 @@ function evaluateVideoQuality(track, filters = {}) {
   const qualityScore = getTrackQualityScore(track)
   const releaseSignals = track.releaseMetadataSignals || getReleaseMetadataSignals(track)
 
+  // long-form mixes and sets are not treated as single discovery tracks.
   if (isLikelyLongFormMix(track)) {
     return {
       keep: false,
@@ -1489,6 +1600,7 @@ function evaluateVideoQuality(track, filters = {}) {
 
   const hardNonMusicPattern = findHardNonMusicPattern(title, description, channel)
 
+  // hard non-music terms can still pass only when the music likelihood is very strong. helps boost non-topic channel music 
   if (hardNonMusicPattern && musicLikelihood.score < 7.1) {
     return {
       keep: false,
@@ -1563,6 +1675,7 @@ function evaluateVideoQuality(track, filters = {}) {
   }
 }
 
+// this performs one youtube request, records estimated quota use, and handles etag caching.
 async function fetchYouTubeJson(url, options = {}) {
   const {
     endpoint = 'youtube.list',
@@ -1572,6 +1685,7 @@ async function fetchYouTubeJson(url, options = {}) {
   const requestKey = buildRequestLogKey(url)
   const headers = {}
 
+  // etag headers let youtube return a cheap not-modified response when cached data is still valid.
   if (cacheEntry?.etag) {
     headers['If-None-Match'] = cacheEntry.etag
   }
@@ -1593,6 +1707,7 @@ async function fetchYouTubeJson(url, options = {}) {
         : undefined,
     )
   } catch (error) {
+    // if a conditional request fails, retry once without the etag before giving up.
     if (cacheEntry?.etag) {
       if (QUOTA_DEBUG) {
         console.warn('[CrateDigger][youtube] conditional request failed; retrying without ETag', {
@@ -1620,6 +1735,7 @@ async function fetchYouTubeJson(url, options = {}) {
     }
   }
 
+  // a not-modified response means the cached payload is still usable.
   if (response.status === 304 && cacheEntry?.data) {
     return {
       data: cacheEntry.data,
@@ -1633,6 +1749,7 @@ async function fetchYouTubeJson(url, options = {}) {
   if (!response.ok) {
     console.error('[CrateDigger][youtube] full API error:', data)
 
+    // youtube error reasons are copied onto the error so callers can show quota-specific messages.
     const reasons = getYouTubeErrorReasons(data)
     const reason =
       reasons[0] ||
@@ -1657,10 +1774,12 @@ async function fetchYouTubeJson(url, options = {}) {
   }
 }
 
+// this extracts the raw youtube id from any app track id shape.
 function getVideoId(track) {
   return String(track?.youtubeVideoId || track?.videoId || track?.id || '').replace(/^yt-/, '')
 }
 
+// this builds a compact debug row for a scored track.
 function summarizeTopTrack(track) {
   const breakdown = track.scoreBreakdown || {}
 
@@ -1687,6 +1806,7 @@ function summarizeTopTrack(track) {
   }
 }
 
+// this prints discovery diagnostics in development without affecting users.
 function debugYouTubeResults({ searchQuery, queryPlan, candidates, accepted, rejectedCounts, scored }) {
   if (!DEV) {
     return
@@ -1713,6 +1833,7 @@ function debugYouTubeResults({ searchQuery, queryPlan, candidates, accepted, rej
   console.table(getAvailableStyleOptions(scored).slice(0, 15))
   console.table(getAvailableFormatOptions(scored).slice(0, 15))
 
+  // this one known hidden gem is used as a quick sanity check while tuning filters.
   const goldCandidate =
     scored.find((track) => getVideoId(track) === 'AE_fJPFMC1M') ||
     candidates.find((track) => getVideoId(track) === 'AE_fJPFMC1M')
@@ -1736,6 +1857,7 @@ function debugYouTubeResults({ searchQuery, queryPlan, candidates, accepted, rej
   console.groupEnd()
 }
 
+// this decides how much extra gem score a clean sparse release should receive.
 function getMinimalMetadataReleaseBoost(track) {
   const releaseSignals = track?.releaseMetadataSignals
   const tagCount = Array.isArray(track?.youtubeTags)
@@ -1755,6 +1877,7 @@ function getMinimalMetadataReleaseBoost(track) {
   return 0.2
 }
 
+// this applies the clean-release boost and refreshes the human-readable gem reasons.
 function applyReleaseMetadataGemBoost(track) {
   const minimalMetadataBoost = getMinimalMetadataReleaseBoost(track)
 
@@ -1769,6 +1892,7 @@ function applyReleaseMetadataGemBoost(track) {
     }
   }
 
+  // the cap keeps metadata boosts from creating unrealistic visible scores.
   const nextGemScore = Number(Math.min((Number(track.gemScore) || 0) + minimalMetadataBoost, 9.6).toFixed(1))
   const nextScoreBreakdown = {
     ...(track.scoreBreakdown || {}),
@@ -1794,10 +1918,12 @@ function applyReleaseMetadataGemBoost(track) {
   }
 }
 
+// this scores tracks first, then applies youtube release metadata boosts.
 function attachGemScoresWithReleaseBoost(tracks = []) {
   return attachGemScores(tracks).map(applyReleaseMetadataGemBoost)
 }
 
+// this logs release metadata signals while tuning discovery in development.
 function debugReleaseSignals(tracks = []) {
   if (!DEV || tracks.length === 0) {
     return
@@ -1820,6 +1946,7 @@ function debugReleaseSignals(tracks = []) {
   console.groupEnd()
 }
 
+// this splits ids into youtube batch sizes.
 function chunkArray(values = [], chunkSize = YOUTUBE_VIDEO_DETAILS_BATCH_SIZE) {
   const chunks = []
 
@@ -1830,6 +1957,7 @@ function chunkArray(values = [], chunkSize = YOUTUBE_VIDEO_DETAILS_BATCH_SIZE) {
   return chunks
 }
 
+// this appends video ids without duplicates and stops at the discovery limit.
 function appendUniqueVideoIds(targetVideoIds, seenVideoIds, nextVideoIds = [], limit = YOUTUBE_DISCOVERY_MAX_VIDEO_IDS) {
   for (const nextVideoId of nextVideoIds) {
     const videoId = cleanYouTubeVideoId(nextVideoId)
@@ -1847,6 +1975,7 @@ function appendUniqueVideoIds(targetVideoIds, seenVideoIds, nextVideoIds = [], l
   }
 }
 
+// this builds the cache key for one youtube search.list request.
 function buildSearchResultCacheKey(queryPlanItem) {
   return JSON.stringify({
     q: queryPlanItem.searchQuery,
@@ -1859,18 +1988,21 @@ function buildSearchResultCacheKey(queryPlanItem) {
   })
 }
 
+// this builds a stable cache key for batched id requests.
 function buildBatchCacheKey(values = []) {
   return uniqueDiscoveryValues(values)
     .sort()
     .join(',')
 }
 
+// this pulls video ids out of a youtube search response.
 function extractSearchVideoIds(searchResult) {
   return (searchResult?.items || [])
     .map((item) => item.id?.videoId)
     .filter(Boolean)
 }
 
+// this extracts the channel fields needed for cheap channel expansion.
 function getSearchItemChannel(item) {
   const snippet = item?.snippet || {}
 
@@ -1881,6 +2013,7 @@ function getSearchItemChannel(item) {
   }
 }
 
+// this checks whether a search result points to a channel worth expanding through uploads.
 function isKnownMusicChannelCandidate(item, filters = {}) {
   const channel = getSearchItemChannel(item)
 
@@ -1896,6 +2029,7 @@ function isKnownMusicChannelCandidate(item, filters = {}) {
     return true
   }
 
+  // expansion is only useful when both the video title and channel look music-focused.
   const hasTrackIntent =
     /\bofficial audio\b|\bprovided to youtube\b|\boriginal mix\b|\bextended mix\b|\bpremiere\b|\bfull track\b|\bsingle\b|\brelease\b/.test(
       normalizedCombinedText,
@@ -1908,6 +2042,7 @@ function isKnownMusicChannelCandidate(item, filters = {}) {
   return hasTrackIntent && hasMusicChannelSignal
 }
 
+// this collects unique channel candidates from search results.
 function collectKnownMusicChannelCandidates(items = [], candidates, filters = {}) {
   items.forEach((item) => {
     if (!isKnownMusicChannelCandidate(item, filters)) {
@@ -1927,6 +2062,7 @@ function collectKnownMusicChannelCandidates(items = [], candidates, filters = {}
   })
 }
 
+// this ranks topic channels first and keeps only a small expansion set.
 function getKnownMusicChannelIds(candidates) {
   return Array.from(candidates.values())
     .sort((a, b) => Number(b.isTopic) - Number(a.isTopic))
@@ -1934,6 +2070,7 @@ function getKnownMusicChannelIds(candidates) {
     .map((channel) => channel.id)
 }
 
+// this logs how many expensive search calls the lazy queue is using.
 function logDiscoveryQueueRequest({ reason = 'initial', queueIndex = 0, queryPlan = [], queryPlanItem = null }) {
   if (!QUOTA_DEBUG) {
     return
@@ -1962,6 +2099,7 @@ function logDiscoveryQueueRequest({ reason = 'initial', queueIndex = 0, queryPla
   console.info('[CrateDigger][youtube][quota] initial discovery limited to one search.list request', payload)
 }
 
+// this fetches one youtube search result page for one planned query.
 async function fetchYouTubeSearchResult(apiKey, queryPlanItem) {
   const cacheKey = buildSearchResultCacheKey(queryPlanItem)
 
@@ -1983,6 +2121,7 @@ async function fetchYouTubeSearchResult(apiKey, queryPlanItem) {
       searchUrl.searchParams.set('fields', YOUTUBE_SEARCH_FIELDS)
       searchUrl.searchParams.set('key', apiKey)
 
+      // seeded upload windows keep repeated discovery passes varied.
       if (queryPlanItem.uploadWindow) {
         searchUrl.searchParams.set('publishedAfter', queryPlanItem.uploadWindow.after)
         searchUrl.searchParams.set('publishedBefore', queryPlanItem.uploadWindow.before)
@@ -2003,6 +2142,7 @@ async function fetchYouTubeSearchResult(apiKey, queryPlanItem) {
   )
 }
 
+// this loads channel metadata, especially upload playlist ids, in cached batches.
 async function fetchYouTubeChannelsByIds(apiKey, channelIds = []) {
   const channelsById = new Map()
   const uniqueChannelIds = uniqueDiscoveryValues(channelIds)
@@ -2020,6 +2160,7 @@ async function fetchYouTubeChannelsByIds(apiKey, channelIds = []) {
     missingChannelIds.push(channelId)
   })
 
+  // only missing channels hit the network; cached channels are reused above.
   for (const channelIdChunk of chunkArray(missingChannelIds, YOUTUBE_CHANNEL_DETAILS_BATCH_SIZE)) {
     const batchKey = buildBatchCacheKey(channelIdChunk)
     const channelsResult = await getOrFetchCached(
@@ -2063,6 +2204,7 @@ async function fetchYouTubeChannelsByIds(apiKey, channelIds = []) {
   return channelsById
 }
 
+// this loads recent upload video ids from one channel upload playlist.
 async function fetchYouTubeUploadVideoIds(apiKey, playlistId) {
   const normalizedPlaylistId = String(playlistId || '').trim()
 
@@ -2106,6 +2248,7 @@ async function fetchYouTubeUploadVideoIds(apiKey, playlistId) {
   )
 }
 
+// this expands good music channels into extra candidate video ids at low quota cost.
 async function fetchKnownChannelUploadVideoIds(apiKey, channelCandidates) {
   const channelIds = getKnownMusicChannelIds(channelCandidates)
 
@@ -2138,6 +2281,7 @@ async function fetchKnownChannelUploadVideoIds(apiKey, channelCandidates) {
   return uploadVideoIds
 }
 
+// this fetches full video details for candidate ids in cached batches.
 async function fetchYouTubeVideosByIds(apiKey, videoIds = []) {
   const videosById = new Map()
   const uniqueVideoIds = uniqueDiscoveryValues(videoIds.map(cleanYouTubeVideoId).filter(Boolean))
@@ -2155,6 +2299,7 @@ async function fetchYouTubeVideosByIds(apiKey, videoIds = []) {
     missingVideoIds.push(videoId)
   })
 
+  // youtube videos.list accepts batches, so missing ids are grouped before fetching.
   for (const videoIdChunk of chunkArray(missingVideoIds)) {
     const batchKey = buildBatchCacheKey(videoIdChunk)
     const videosResult = await getOrFetchCached(
@@ -2198,6 +2343,39 @@ async function fetchYouTubeVideosByIds(apiKey, videoIds = []) {
   return videosById
 }
 
+// this turns fetched youtube video details into normalized app candidates.
+function normalizeYouTubeCandidates(videoIds = [], videosById, filters = {}, queryPlanItem = null) {
+  return videoIds
+    .map((videoId) => normalizeYouTubeVideo(videosById.get(videoId), {
+      ...filters,
+      discoveryQueryPlanItem: queryPlanItem,
+    }))
+    .filter(Boolean)
+}
+
+// this applies the youtube preflight quality gate and returns accepted candidates plus rejection counts.
+function evaluateYouTubeCandidates(candidates = [], filters = {}) {
+  const accepted = []
+  const rejectedCounts = new Map()
+
+  for (const candidate of candidates) {
+    const qualityCheck = evaluateVideoQuality(candidate, filters)
+
+    if (!qualityCheck.keep) {
+      incrementReason(rejectedCounts, qualityCheck.reason)
+      continue
+    }
+
+    accepted.push(candidate)
+  }
+
+  return {
+    accepted,
+    rejectedCounts,
+  }
+}
+
+// this runs the full youtube discovery pipeline and returns scored tracks.
 async function fetchYouTubeTracks(query, filters = {}) {
   const apiKey = getApiKey()
 
@@ -2217,6 +2395,7 @@ async function fetchYouTubeTracks(query, filters = {}) {
     return []
   }
 
+  // only one query plan item is loaded at a time so swipe mode can lazily extend the queue.
   logDiscoveryQueueRequest({
     reason: filters.discoveryLoadReason || 'initial',
     queueIndex,
@@ -2227,46 +2406,65 @@ async function fetchYouTubeTracks(query, filters = {}) {
   const searchResult = await fetchYouTubeSearchResult(apiKey, queryPlanItem)
   const searchItems = searchResult.items || []
 
+  // search results provide initial ids and channel candidates for cheap expansion.
   collectKnownMusicChannelCandidates(searchItems, channelCandidates, filters)
-  appendUniqueVideoIds(videoIds, seenVideoIds, extractSearchVideoIds(searchResult))
+  const searchVideoIds = extractSearchVideoIds(searchResult)
+  appendUniqueVideoIds(videoIds, seenVideoIds, searchVideoIds)
 
-  if (filters.preferTopicChannels !== false) {
+  let acceptedPreExpansionCount = 0
+  let preExpansionVideosById = new Map()
+
+  if (videoIds.length > 0) {
+    preExpansionVideosById = await fetchYouTubeVideosByIds(apiKey, videoIds)
+
+    const preExpansionCandidates = normalizeYouTubeCandidates(
+      videoIds,
+      preExpansionVideosById,
+      filters,
+      queryPlanItem,
+    )
+
+    acceptedPreExpansionCount = evaluateYouTubeCandidates(preExpansionCandidates, filters).accepted.length
+  }
+
+  // topic and label channels can help weak batches, but strong search batches should not fan out.
+  const shouldExpandKnownMusicChannels =
+    filters.preferTopicChannels !== false &&
+    acceptedPreExpansionCount < CHANNEL_EXPANSION_ACCEPTED_RESULT_FLOOR
+
+  let addedChannelExpansionIds = false
+
+  if (shouldExpandKnownMusicChannels) {
     try {
+      const preExpansionVideoIdCount = videoIds.length
       const uploadVideoIds = await fetchKnownChannelUploadVideoIds(apiKey, channelCandidates)
 
       appendUniqueVideoIds(videoIds, seenVideoIds, uploadVideoIds)
+      addedChannelExpansionIds = videoIds.length > preExpansionVideoIdCount
     } catch (error) {
       if (QUOTA_DEBUG) {
         console.warn('[CrateDigger][youtube] cheap channel expansion skipped', error)
       }
     }
+  } else if (QUOTA_DEBUG && filters.preferTopicChannels !== false && channelCandidates.size > 0) {
+    console.info('[CrateDigger][youtube][quota] cheap channel expansion skipped; search batch strong', {
+      acceptedPreExpansionCount,
+      floor: CHANNEL_EXPANSION_ACCEPTED_RESULT_FLOOR,
+      channels: channelCandidates.size,
+    })
   }
 
   if (videoIds.length === 0) {
     return []
   }
 
-  const videosById = await fetchYouTubeVideosByIds(apiKey, videoIds)
-  const candidates = videoIds
-    .map((videoId) => normalizeYouTubeVideo(videosById.get(videoId), {
-      ...filters,
-      discoveryQueryPlanItem: queryPlanItem,
-    }))
-    .filter(Boolean)
+  const videosById = addedChannelExpansionIds
+    ? await fetchYouTubeVideosByIds(apiKey, videoIds)
+    : preExpansionVideosById
 
-  const accepted = []
-  const rejectedCounts = new Map()
-
-  for (const candidate of candidates) {
-    const qualityCheck = evaluateVideoQuality(candidate, filters)
-
-    if (!qualityCheck.keep) {
-      incrementReason(rejectedCounts, qualityCheck.reason)
-      continue
-    }
-
-    accepted.push(candidate)
-  }
+  // full video details are normalized after search so stats, duration, and tags are available.
+  const candidates = normalizeYouTubeCandidates(videoIds, videosById, filters, queryPlanItem)
+  const { accepted, rejectedCounts } = evaluateYouTubeCandidates(candidates, filters)
 
   const scored = attachGemScoresWithReleaseBoost(accepted)
   debugReleaseSignals(scored)
@@ -2283,6 +2481,7 @@ async function fetchYouTubeTracks(query, filters = {}) {
   return scored
 }
 
+// this is the main public search entry used by the app.
 export async function searchTracks(query = '', filters = {}) {
   const effectiveFilters = {
     ...filters,
@@ -2295,6 +2494,7 @@ export async function searchTracks(query = '', filters = {}) {
   const cacheKey = buildSearchKey(query, effectiveFilters)
   const cachedSearch = getFreshCacheEntry(searchCache, cacheKey)
 
+  // fresh cached results avoid repeat quota use for the same seed and filters.
   if (cachedSearch) {
     logQuotaCacheHit('searchTracks', cacheKey)
     setSearchStatus(
@@ -2316,6 +2516,7 @@ export async function searchTracks(query = '', filters = {}) {
 
   const inFlightKey = `searchTracks:${cacheKey}`
 
+  // in-flight dedupe prevents duplicate network work when react asks twice.
   if (requestInFlightCache.has(inFlightKey)) {
     logQuotaCacheHit('searchTracks in-flight', cacheKey)
     return requestInFlightCache.get(inFlightKey)
@@ -2324,6 +2525,7 @@ export async function searchTracks(query = '', filters = {}) {
   const searchPromise = (async () => {
     const apiKey = getApiKey()
 
+    // without an api key the app can still render, but live youtube results are disabled.
     if (!apiKey) {
       setSearchStatus(
         'youtube',
@@ -2339,6 +2541,7 @@ export async function searchTracks(query = '', filters = {}) {
       const apiTracks = await fetchYouTubeTracks(query, effectiveFilters)
 
       if (Array.isArray(apiTracks)) {
+        // the seed controls visible ordering after the scoring pipeline finishes.
         const shuffledApiTracks = seededShuffle(
           apiTracks,
           createSeededRandom(`${seedProfile.numericSeed}:result-order`),
@@ -2365,6 +2568,7 @@ export async function searchTracks(query = '', filters = {}) {
     } catch (error) {
       console.error('[CrateDigger][youtube] request failed', error)
 
+      // quota errors get a specific status so the overlay can explain what happened.
       if (isYouTubeDailyQuotaError(error)) {
         setSearchStatus(
           'youtube',
@@ -2400,6 +2604,209 @@ export async function searchTracks(query = '', filters = {}) {
   }
 }
 
+function getSeedScanCount(options = {}) {
+  const count = Number(options.count ?? options.seedCount ?? 12)
+
+  if (!Number.isFinite(count) || count < 1) {
+    return 12
+  }
+
+  return Math.min(Math.floor(count), 200)
+}
+
+function getSeedQueueDepth(options = {}) {
+  const depth = Number(options.queueDepth ?? options.depth ?? 1)
+
+  if (!Number.isFinite(depth) || depth < 1) {
+    return 1
+  }
+
+  return Math.min(Math.floor(depth), SEED_QUERY_COUNT)
+}
+
+function incrementNumericSeed(seed, offset = 0) {
+  const normalizedSeed = normalizeNumericSeed(seed)
+  const width = Math.max(normalizedSeed.length, 8)
+  const nextValue = BigInt(normalizedSeed) + BigInt(offset)
+
+  return normalizeNumericSeed(nextValue.toString().padStart(width, '0'))
+}
+
+function getSeedScanList(options = {}) {
+  if (Array.isArray(options.seeds) && options.seeds.length > 0) {
+    return uniqueDiscoveryValues(options.seeds.map((seed) => normalizeNumericSeed(seed)))
+  }
+
+  const startSeed = normalizeNumericSeed(options.startSeed ?? options.seed ?? DEFAULT_NUMERIC_SEED)
+  const count = getSeedScanCount(options)
+
+  return Array.from({ length: count }, (_, index) => incrementNumericSeed(startSeed, index))
+}
+
+function summarizeSeedMatchTrack(track) {
+  return {
+    title: track?.title || '',
+    channel: track?.sourceChannelTitle || track?.channelTitle || track?.artist || '',
+    style: track?.style || track?.genre || '',
+    format: track?.format || '',
+    views: track?.views ?? 0,
+    gemScore: track?.gemScore ?? 0,
+    rankScore: track?.rankScore ?? track?.displayScore ?? 0,
+  }
+}
+
+function logSeedScanResult(result) {
+  if (typeof console === 'undefined') {
+    return
+  }
+
+  const tableRows = result.matches.map((match) => ({
+    seed: match.seed,
+    queueIndex: match.queueIndex,
+    searchQuery: match.searchQuery,
+    title: match.track.title,
+    channel: match.track.channel,
+    gemScore: match.track.gemScore,
+    rankScore: match.track.rankScore,
+  }))
+
+  console.info('[CrateDigger][youtube][seed-scan]', {
+    target: result.target,
+    testedSeeds: result.testedSeeds,
+    queueDepth: result.queueDepth,
+    matches: result.matches.length,
+    errors: result.errors.length,
+    estimatedSearchQuotaUnits: result.estimatedSearchQuotaUnits,
+  })
+
+  if (tableRows.length > 0) {
+    console.table(tableRows)
+    return
+  }
+
+  console.info('[CrateDigger][youtube][seed-scan] no matching seeds found in this scan window')
+}
+
+// this console/debug helper verifies which discovery seeds surface a specific youtube track.
+export async function findYouTubeSeedsForTrack(link, options = {}) {
+  const videoId = extractYouTubeVideoId(link)
+
+  if (!videoId) {
+    throw new Error('Pass a YouTube link, video id, or app track id.')
+  }
+
+  const apiKey = getApiKey()
+
+  if (!apiKey) {
+    throw new Error('No YouTube API key found. Add VITE_YOUTUBE_API_KEY before scanning seeds.')
+  }
+
+  const {
+    filters: optionFilters = {},
+    query = '',
+    maxMatches = Infinity,
+  } = options
+  const scanFilters = {
+    musicTracksOnly: true,
+    preferTopicChannels: true,
+    hideShorts: true,
+    sortBy: 'gemScore',
+    ...optionFilters,
+  }
+  const seeds = getSeedScanList(options)
+  const queueDepth = getSeedQueueDepth(options)
+  const targetTrack = await getVideoDetails(videoId, scanFilters)
+  const targetSummary = targetTrack
+    ? {
+        videoId,
+        ...summarizeSeedMatchTrack(targetTrack),
+        styles: targetTrack.styles || [],
+        formats: targetTrack.formats || [],
+        publishedAt: targetTrack.publishedAt,
+      }
+    : { videoId }
+  const result = {
+    target: targetSummary,
+    query,
+    testedSeeds: seeds.length,
+    queueDepth,
+    estimatedSearchQuotaUnits: seeds.length * queueDepth * YOUTUBE_QUOTA_COSTS.search,
+    matches: [],
+    misses: [],
+    errors: [],
+  }
+  const maxMatchCount = Number.isFinite(Number(maxMatches))
+    ? Math.max(1, Math.floor(Number(maxMatches)))
+    : Infinity
+
+  for (const seed of seeds) {
+    const discoverySeed = createDiscoverySeedForQuery(seed, query, scanFilters)
+    let seedMatched = false
+
+    for (const queryPlanItem of discoverySeed.queryPlan.slice(0, queueDepth)) {
+      try {
+        const searchFilters = {
+          ...scanFilters,
+          discoverySeed,
+          discoveryQueueIndex: queryPlanItem.index,
+          discoveryLoadReason: 'seed-scan',
+        }
+        const apiTracks = await fetchYouTubeTracks(query, searchFilters)
+        const visibleTracks = filterTracks(
+          seededShuffle(apiTracks, createSeededRandom(`${discoverySeed.numericSeed}:result-order`)),
+          { ...searchFilters, query: '' },
+        )
+        const matchedTrack = visibleTracks.find((track) => getVideoId(track) === videoId)
+
+        if (!matchedTrack) {
+          continue
+        }
+
+        seedMatched = true
+        result.matches.push({
+          seed: discoverySeed.numericSeed,
+          queueIndex: queryPlanItem.index,
+          searchQuery: queryPlanItem.searchQuery,
+          uploadWindow: queryPlanItem.uploadWindow,
+          seedProfile: {
+            style: discoverySeed.style,
+            format: discoverySeed.format,
+            context: discoverySeed.context,
+            year: discoverySeed.year,
+            windowSpanYears: discoverySeed.windowSpanYears,
+          },
+          track: summarizeSeedMatchTrack(matchedTrack),
+        })
+
+        if (result.matches.length >= maxMatchCount) {
+          logSeedScanResult(result)
+          return result
+        }
+      } catch (error) {
+        result.errors.push({
+          seed: discoverySeed.numericSeed,
+          queueIndex: queryPlanItem.index,
+          message: error?.message || String(error),
+          reason: error?.quotaReason || error?.reason || '',
+        })
+
+        if (isYouTubeDailyQuotaError(error)) {
+          logSeedScanResult(result)
+          throw error
+        }
+      }
+    }
+
+    if (!seedMatched) {
+      result.misses.push(seed)
+    }
+  }
+
+  logSeedScanResult(result)
+  return result
+}
+
+// this exposes raw youtube discovery for callers that do not need search status or app filtering.
 export async function searchYouTubeVideos(query = '', filters = {}) {
   return fetchYouTubeTracks(query, {
     ...filters,
@@ -2408,6 +2815,7 @@ export async function searchYouTubeVideos(query = '', filters = {}) {
   })
 }
 
+// this resolves any youtube link or app id into one normalized track.
 export async function getTrackById(id) {
   const videoId = extractYouTubeVideoId(id)
 
@@ -2418,6 +2826,7 @@ export async function getTrackById(id) {
   return getVideoDetails(videoId)
 }
 
+// this builds a related search from a base track and returns nearby discoveries.
 export async function getRelatedTracks(trackId) {
   const baseTrack = await getTrackById(trackId)
 
@@ -2425,6 +2834,7 @@ export async function getRelatedTracks(trackId) {
     return []
   }
 
+  // the related query reuses the artist, title, and strongest style or format clue.
   const relatedQuery = [
     baseTrack.artist,
     baseTrack.title,
@@ -2454,6 +2864,7 @@ export async function getRelatedTracks(trackId) {
   return related.filter((track) => track.id !== baseTrack.id).slice(0, 12)
 }
 
+// this placeholder confirms a crate add action for youtube tracks.
 export async function addTrackToCrate(trackId, crateId) {
   return {
     ok: true,
@@ -2462,6 +2873,7 @@ export async function addTrackToCrate(trackId, crateId) {
   }
 }
 
+// this fetches and normalizes one youtube video by id.
 export async function getVideoDetails(videoId, filters = {}) {
   const apiKey = getApiKey()
   const normalizedVideoId = extractYouTubeVideoId(videoId)
@@ -2481,6 +2893,7 @@ export async function getVideoDetails(videoId, filters = {}) {
   }
 }
 
+// this scores one youtube link and returns the details used by debug tools.
 export async function getYouTubeGemScoreDetails(link, filters = {}) {
   const videoId = extractYouTubeVideoId(link)
 
@@ -2498,6 +2911,7 @@ export async function getYouTubeGemScoreDetails(link, filters = {}) {
     throw new Error(`No YouTube video details found for ${videoId}.`)
   }
 
+  // the same scoring path is used here as in discovery results.
   const scoredTrack = attachGemScoresWithReleaseBoost([track])[0]
   const musicLikelihood = getMusicLikelihoodDetails(scoredTrack)
 
@@ -2517,19 +2931,23 @@ export async function getYouTubeGemScoreDetails(link, filters = {}) {
   }
 }
 
+// this returns only the visible gem score for one youtube link.
 export async function getYouTubeGemScore(link, filters = {}) {
   const details = await getYouTubeGemScoreDetails(link, filters)
   return details.gemScore
 }
 
+// this logs the full gem score details and returns the score.
 export async function logYouTubeGemScore(link, filters = {}) {
   const details = await getYouTubeGemScoreDetails(link, filters)
   console.log('[CrateDigger][gem-score]', details)
   return details.gemScore
 }
 
+// this exposes video normalization to tests without exposing internal fetch helpers.
 export function normalizeYouTubeVideoForTests(video, filters = {}) {
   return normalizeYouTubeVideo(video, filters)
 }
 
+// these helpers are exported for tests and small utility callers.
 export { extractYouTubeVideoId, parseYouTubeDuration, normalizeYouTubeVideo }

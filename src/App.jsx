@@ -30,6 +30,8 @@ import {
 import {
   addTrackToCrate as addTrackToCrateApi,
   createDiscoverySeed,
+  createNumericSeed,
+  findYouTubeSeedsForTrack,
   getLastSearchStatus,
   getYouTubeGemScore,
   getYouTubeGemScoreDetails,
@@ -249,7 +251,7 @@ function App() {
   const [history, setHistory] = useState(() => getHistory())
   const [swipedTrackIds, setSwipedTrackIds] = useState([])
   const [searchRefreshKey, setSearchRefreshKey] = useState(0)
-  const [currentDiscoverySeed, setCurrentDiscoverySeed] = useState(() => normalizeNumericSeed())
+  const [currentDiscoverySeed, setCurrentDiscoverySeed] = useState(() => normalizeNumericSeed(createNumericSeed()))
   const [swipeTheme, setSwipeTheme] = useState(null)
   const [toasts, setToasts] = useState([])
 
@@ -348,6 +350,35 @@ function App() {
   }, [])
 
   useEffect(() => {
+    window.findYouTubeSeedsForTrack = (link, options = {}) => {
+      const {
+        filters: optionFilters = {},
+        startSeed,
+        ...scanOptions
+      } = options || {}
+      const scanFilters = {
+        ...withLockedTrackFilters({
+          ...filters,
+          digDeeperTags: digDeeperActive ? digDeeperTags : [],
+        }),
+        ...optionFilters,
+      }
+
+      return findYouTubeSeedsForTrack(link, {
+        startSeed: startSeed ?? currentDiscoverySeed,
+        ...scanOptions,
+        filters: scanFilters,
+      })
+    }
+    window.reverseEngineerYouTubeSeeds = window.findYouTubeSeedsForTrack
+
+    return () => {
+      delete window.findYouTubeSeedsForTrack
+      delete window.reverseEngineerYouTubeSeeds
+    }
+  }, [currentDiscoverySeed, digDeeperActive, digDeeperTags, filters])
+
+  useEffect(() => {
     saveCrates(crates)
   }, [crates])
 
@@ -391,7 +422,7 @@ function App() {
             digDeeperTags: digDeeperActive ? digDeeperTags : [],
             refreshKey: searchRefreshKey,
           })
-          const discoverySeed = createDiscoverySeed(searchFilters)
+          const discoverySeed = createDiscoverySeed(currentDiscoverySeed, searchFilters)
           const seedKey = normalizeNumericSeed(discoverySeed)
           const nextDiscoverySession = {
             seedKey,
@@ -470,7 +501,7 @@ function App() {
       window.clearTimeout(loadingTimer)
       window.clearTimeout(searchTimer)
     }
-  }, [filters, digDeeperActive, digDeeperTags, searchRefreshKey, isDemoMode])
+  }, [currentDiscoverySeed, filters, digDeeperActive, digDeeperTags, searchRefreshKey, isDemoMode])
 
   useEffect(() => {
     if (activeScreen !== 'swipe' || !swipeTrack || isLoadingTracks) {
@@ -954,6 +985,52 @@ function App() {
     setSearchRefreshKey((prev) => prev + 1)
   }
 
+  function handleRegenerateSeed() {
+    setIsDemoMode(false)
+    setIsLoadingTracks(true)
+    setSwipedTrackIds([])
+    setSearchStatus(DEFAULT_SEARCH_STATUS)
+    setCurrentDiscoverySeed(normalizeNumericSeed(createNumericSeed()))
+  }
+
+  function handleSetDiscoverySeed() {
+    const enteredSeed = window.prompt(
+      'Set discovery seed',
+      currentDiscoverySeed === 'demo' ? '' : currentDiscoverySeed,
+    )
+
+    if (enteredSeed === null) {
+      return
+    }
+
+    const hasDigits = /\d/.test(enteredSeed)
+
+    if (!hasDigits) {
+      pushToast({
+        tone: 'error',
+        title: 'Seed needs a number',
+        message: 'Paste a seed from the sidebar or console seed scan.',
+      })
+      return
+    }
+
+    const nextSeed = normalizeNumericSeed(enteredSeed)
+
+    setIsDemoMode(false)
+    setIsLoadingTracks(true)
+    setSwipedTrackIds([])
+    setSearchStatus(DEFAULT_SEARCH_STATUS)
+    setCurrentDiscoverySeed(nextSeed)
+    setSearchRefreshKey((prev) => prev + 1)
+    navigate('/search')
+
+    pushToast({
+      tone: 'info',
+      title: 'Seed set',
+      message: `Searching seed ${nextSeed}.`,
+    })
+  }
+
   async function loadMoreDiscoveryTracks() {
     const session = discoverySessionRef.current
 
@@ -1140,6 +1217,8 @@ function App() {
         playbackProgress={playerProgress}
         isDarkMode={shouldApplyChromeDarkMode}
         crateSeed={currentDiscoverySeed}
+        onRegenerateSeed={handleRegenerateSeed}
+        onSetSeed={handleSetDiscoverySeed}
       />
 
       <section className="flex h-full min-h-0 min-w-0 flex-col border-l border-zinc-300/90">

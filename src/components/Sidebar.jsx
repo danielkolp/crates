@@ -78,6 +78,8 @@ function Sidebar({
   playbackProgress = 0,
   isDarkMode = false,
   crateSeed = '',
+  onRegenerateSeed,
+  onSetSeed,
 }) {
   const logoRef = useRef(null)
   const progressSnapshotRef = useRef({ seconds: 0, updatedAt: 0 })
@@ -248,14 +250,34 @@ function Sidebar({
 
       {displaySeed && (
         <div className="px-5 pb-5">
-          <button
-            type="button"
-            onClick={handleCopySeed}
-            className="mono inline-flex max-w-full border-0 bg-transparent p-0 text-left text-[11px] leading-4 text-zinc-400 opacity-70 transition hover:text-zinc-700 hover:opacity-100"
-            aria-label={`Copy crate seed ${displaySeed}`}
-          >
-            <span className="truncate">{seedCopied ? 'Seed copied' : `Seed: ${displaySeed}`}</span>
-          </button>
+          <div className="space-y-2">
+            <button
+              type="button"
+              onClick={handleCopySeed}
+              className="mono block w-full border-0 bg-transparent p-0 text-left text-[11px] leading-4 text-zinc-400 opacity-70 transition hover:text-zinc-700 hover:opacity-100"
+              aria-label={`Copy crate seed ${displaySeed}`}
+            >
+              <span className="block break-all">{seedCopied ? 'Seed copied' : `Seed: ${displaySeed}`}</span>
+            </button>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onRegenerateSeed}
+                className="mono shrink-0 rounded border border-zinc-300 px-1.5 py-0.5 text-[10px] font-medium lowercase leading-4 text-zinc-500 transition hover:border-zinc-900 hover:bg-zinc-900 hover:text-white"
+              >
+                regen
+              </button>
+
+              <button
+                type="button"
+                onClick={onSetSeed}
+                className="mono shrink-0 rounded border border-zinc-300 px-1.5 py-0.5 text-[10px] font-medium lowercase leading-4 text-zinc-500 transition hover:border-zinc-900 hover:bg-zinc-900 hover:text-white"
+              >
+                set seed
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </aside>
