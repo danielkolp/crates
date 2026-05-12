@@ -226,9 +226,15 @@ function App() {
 
   const [isDarkMode, setIsDarkMode] = useState(() => {
     try {
-      return window.localStorage.getItem(THEME_STORAGE_KEY) === 'dark'
+      const storedTheme = window.localStorage.getItem(THEME_STORAGE_KEY)
+
+      if (storedTheme === null) {
+        return true
+      }
+
+      return storedTheme === 'dark'
     } catch {
-      return false
+      return true
     }
   })
 
