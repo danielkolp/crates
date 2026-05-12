@@ -466,6 +466,37 @@
     transform: translate3d(-50%, 0, 0) rotate(-135deg);
   }
 
+  .tooltip-anchor.tooltip-bottom-start[data-tooltip]:not([data-tooltip=''])::before {
+    top: calc(100% + 10px);
+    bottom: auto;
+    left: 0;
+    min-width: 14rem;
+    max-width: min(24rem, calc(100vw - 2rem));
+    text-align: left;
+    transform: translate3d(0, -6px, 0) scale(0.98);
+  }
+
+  .tooltip-anchor.tooltip-bottom-start[data-tooltip]:not([data-tooltip=''])::after {
+    top: calc(100% + 5px);
+    bottom: auto;
+    left: 0.65rem;
+    border-right: 1px solid var(--tooltip-line);
+    border-bottom: 1px solid var(--tooltip-line);
+    border-left: 0;
+    border-top: 0;
+    transform: translate3d(0, -6px, 0) rotate(-135deg);
+  }
+
+  .tooltip-anchor.tooltip-bottom-start[data-tooltip]:not([data-tooltip='']):hover::before,
+  .tooltip-anchor.tooltip-bottom-start[data-tooltip]:not([data-tooltip='']):focus-visible::before {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+
+  .tooltip-anchor.tooltip-bottom-start[data-tooltip]:not([data-tooltip='']):hover::after,
+  .tooltip-anchor.tooltip-bottom-start[data-tooltip]:not([data-tooltip='']):focus-visible::after {
+    transform: translate3d(0, 0, 0) rotate(-135deg);
+  }
+
   .tooltip-anchor.tooltip-right[data-tooltip]:not([data-tooltip=''])::before {
     top: 50%;
     left: calc(100% + 10px);

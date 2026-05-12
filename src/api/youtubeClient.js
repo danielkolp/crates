@@ -98,7 +98,9 @@ const YOUTUBE_PLAYLIST_ITEMS_FIELDS =
   'etag,items(snippet(resourceId/videoId))'
 const QUOTA_USAGE_STORAGE_KEY = 'crateDigger.youtubeQuotaUsageEstimate'
 const SEARCH_LIST_MINUTE_LIMIT_STORAGE_KEY = 'crateDigger.youtubeSearchListMinuteUsage'
+const SEARCH_LIST_SESSION_ID_STORAGE_KEY = 'crateDigger.youtubeSearchListSessionId'
 const SEARCH_LIST_SESSION_LIMIT_STORAGE_KEY = 'crateDigger.youtubeSearchListSessionUsage'
+const SEARCH_LIST_SESSION_BACKUP_STORAGE_KEY = 'crateDigger.youtubeSearchListSessionUsageMirror'
 const SEARCH_LIST_DAILY_LIMIT_STORAGE_KEY = 'crateDigger.youtubeSearchListDailyUsage'
 
 // this descending year list is used to build seeded discovery windows.
@@ -395,6 +397,7 @@ let lastSearchStatus = {
 }
 
 let searchListMinuteTimestamps = []
+let searchListSessionId = ''
 let searchListSessionCount = 0
 let searchListDailyUsage = {
   date: getQuotaDateKey(),
@@ -672,20 +675,106 @@ function persistSearchListMinuteTimestamps(timestamps = []) {
   }
 }
 
-function readStoredSearchListSessionCount() {
-  const storage = getSafeSessionStorage()
+function createSearchListSessionId() {
+  const timestampPart = Date.now().toString(36)
+  const entropyPart = getEntropyInt(0x7fffffff).toString(36)
+
+  return `${timestampPart}-${entropyPart}`
+}
+
+function getSearchListSessionId() {
+  if (searchListSessionId) {
+    return searchListSessionId
+  }
+
+  const sessionStorage = getSafeSessionStorage()
+
+  if (sessionStorage) {
+    try {
+      const storedSessionId = String(sessionStorage.getItem(SEARCH_LIST_SESSION_ID_STORAGE_KEY) || '').trim()
+
+      if (storedSessionId) {
+        searchListSessionId = storedSessionId
+        return searchListSessionId
+      }
+
+      searchListSessionId = createSearchListSessionId()
+      sessionStorage.setItem(SEARCH_LIST_SESSION_ID_STORAGE_KEY, searchListSessionId)
+      return searchListSessionId
+    } catch {
+      // fall through to local storage fallback.
+    }
+  }
+
+  const localStorage = getSafeLocalStorage()
+
+  if (localStorage) {
+    try {
+      const storedSessionId = String(localStorage.getItem(SEARCH_LIST_SESSION_ID_STORAGE_KEY) || '').trim()
+
+      if (storedSessionId) {
+        searchListSessionId = storedSessionId
+        return searchListSessionId
+      }
+
+      searchListSessionId = createSearchListSessionId()
+      localStorage.setItem(SEARCH_LIST_SESSION_ID_STORAGE_KEY, searchListSessionId)
+      return searchListSessionId
+    } catch {
+      // fall through to in-memory fallback.
+    }
+  }
+
+  searchListSessionId = createSearchListSessionId()
+  return searchListSessionId
+}
+
+function readStoredSearchListSessionBackupCount(sessionId = getSearchListSessionId()) {
+  const storage = getSafeLocalStorage()
 
   if (!storage) {
     return null
   }
 
   try {
-    const stored = JSON.parse(storage.getItem(SEARCH_LIST_SESSION_LIMIT_STORAGE_KEY) || '0')
+    const stored = JSON.parse(storage.getItem(SEARCH_LIST_SESSION_BACKUP_STORAGE_KEY) || '{}')
 
-    return normalizeLimitCount(typeof stored === 'number' ? stored : stored.count)
+    if (stored.sessionId !== sessionId) {
+      return 0
+    }
+
+    return normalizeLimitCount(stored.count)
   } catch {
     return 0
   }
+}
+
+function readStoredSearchListSessionCount() {
+  const sessionId = getSearchListSessionId()
+  const storage = getSafeSessionStorage()
+  let sessionCount = null
+
+  if (storage) {
+    try {
+      const stored = JSON.parse(storage.getItem(SEARCH_LIST_SESSION_LIMIT_STORAGE_KEY) || '0')
+
+      sessionCount = normalizeLimitCount(typeof stored === 'number' ? stored : stored.count)
+    } catch {
+      sessionCount = 0
+    }
+  }
+
+  const backupCount = readStoredSearchListSessionBackupCount(sessionId)
+
+  if (sessionCount === null && backupCount === null) {
+    return null
+  }
+
+  // Keep the higher value so a refresh or storage hiccup cannot roll the counter back.
+  return Math.max(
+    normalizeLimitCount(sessionCount),
+    normalizeLimitCount(backupCount),
+  )
 }
 
 function getSearchListSessionCount() {
@@ -700,17 +789,37 @@ function getSearchListSessionCount() {
 
 function persistSearchListSessionCount(count) {
   searchListSessionCount = normalizeLimitCount(count)
+  const sessionId = getSearchListSessionId()
 
-  const storage = getSafeSessionStorage()
+  const sessionStorage = getSafeSessionStorage()
 
-  if (!storage) {
+  if (sessionStorage) {
+    try {
+      sessionStorage.setItem(SEARCH_LIST_SESSION_ID_STORAGE_KEY, sessionId)
+      sessionStorage.setItem(
+        SEARCH_LIST_SESSION_LIMIT_STORAGE_KEY,
+        JSON.stringify({ count: searchListSessionCount }),
+      )
+    } catch {
+      // ignore rate limit persistence failures.
+    }
+  }
+
+  const localStorage = getSafeLocalStorage()
+
+  if (!localStorage) {
     return
   }
 
+  // Mirror the session count in localStorage so a page refresh cannot bypass the session limit.
   try {
-    storage.setItem(
-      SEARCH_LIST_SESSION_LIMIT_STORAGE_KEY,
-      JSON.stringify({ count: searchListSessionCount }),
+    localStorage.setItem(
+      SEARCH_LIST_SESSION_BACKUP_STORAGE_KEY,
+      JSON.stringify({
+        sessionId,
+        count: searchListSessionCount,
+        updatedAt: Date.now(),
+      }),
     )
   } catch {
     // ignore rate limit persistence failures.
