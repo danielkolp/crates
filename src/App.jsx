@@ -33,6 +33,7 @@ import {
   createNumericSeed,
   findYouTubeSeedsForTrack,
   getLastSearchStatus,
+  getSearchListRateLimitState,
   getYouTubeGemScore,
   getYouTubeGemScoreDetails,
   logYouTubeGemScore,
@@ -76,11 +77,13 @@ const DEFAULT_SEARCH_STATUS = {
   source: 'youtube',
   usedFallback: false,
   isQuotaExceeded: false,
+  isRateLimited: false,
   message: 'Ready for live YouTube search.',
 }
 
 const LAZY_DISCOVERY_REMAINING_THRESHOLD = 6
 const TOAST_EXIT_MS = 220
+const RATE_LIMIT_PREVIEW_WINDOW_MS = 10 * 1000
 
 function slugifyPlaylistName(value) {
   const slug = String(value || '')
@@ -234,6 +237,8 @@ function App() {
   const [digDeeperActive, setDigDeeperActive] = useState(false)
   const [isLoadingTracks, setIsLoadingTracks] = useState(false)
   const [searchStatus, setSearchStatus] = useState(DEFAULT_SEARCH_STATUS)
+  const [searchRateLimit, setSearchRateLimit] = useState(() => getSearchListRateLimitState())
+  const [rateLimitPreviewStartedAt, setRateLimitPreviewStartedAt] = useState(0)
   const [isDemoMode, setIsDemoMode] = useState(false)
   const [allTracks, setAllTracks] = useState([])
   const [trackCatalog, setTrackCatalog] = useState({})
@@ -295,6 +300,32 @@ function App() {
   const shouldApplySwipeDarkMode = isDarkMode && activeScreen === 'swipe'
   const shouldApplyChromeDarkMode = isDarkMode
   const shouldUseSwipeTheme = activeScreen === 'swipe' && swipeTheme
+  const visibleSearchRateLimit = useMemo(() => {
+    if (!rateLimitPreviewStartedAt) {
+      return searchRateLimit
+    }
+
+    const now = Date.now()
+    const elapsedMs = Math.max(now - rateLimitPreviewStartedAt, 0)
+    const remainingMs = Math.max(RATE_LIMIT_PREVIEW_WINDOW_MS - elapsedMs, 0)
+
+    if (remainingMs <= 0) {
+      return searchRateLimit
+    }
+
+    return {
+      isLimited: true,
+      reason: 'minute',
+      mode: 'preview',
+      limit: 2,
+      used: 2,
+      callsInWindow: 2,
+      remainingMs,
+      resetAt: now + remainingMs,
+      windowMs: RATE_LIMIT_PREVIEW_WINDOW_MS,
+      progress: 1 - (remainingMs / RATE_LIMIT_PREVIEW_WINDOW_MS),
+    }
+  }, [rateLimitPreviewStartedAt, searchRateLimit])
 
   const shouldShowSearchNotice =
     Boolean(searchStatus.message) &&
@@ -331,6 +362,51 @@ function App() {
       navigate('/search', { replace: true })
     }
   }, [location.pathname, navigate])
+
+  useEffect(() => {
+    function refreshSearchRateLimit() {
+      setSearchRateLimit(getSearchListRateLimitState())
+    }
+
+    refreshSearchRateLimit()
+
+    const timerId = window.setInterval(refreshSearchRateLimit, 500)
+
+    return () => {
+      window.clearInterval(timerId)
+    }
+  }, [])
+
+  useEffect(() => {
+    function handleRateLimitPreviewKeyDown(event) {
+      if (!event.altKey || !event.shiftKey || event.key.toLowerCase() !== 'l') {
+        return
+      }
+
+      event.preventDefault()
+      setRateLimitPreviewStartedAt((startedAt) => (startedAt ? 0 : Date.now()))
+    }
+
+    window.addEventListener('keydown', handleRateLimitPreviewKeyDown)
+
+    return () => {
+      window.removeEventListener('keydown', handleRateLimitPreviewKeyDown)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!rateLimitPreviewStartedAt) {
+      return undefined
+    }
+
+    const timerId = window.setTimeout(() => {
+      setRateLimitPreviewStartedAt(0)
+    }, RATE_LIMIT_PREVIEW_WINDOW_MS)
+
+    return () => {
+      window.clearTimeout(timerId)
+    }
+  }, [rateLimitPreviewStartedAt])
 
   useEffect(() => () => {
     toastTimersRef.current.forEach((timerId) => window.clearTimeout(timerId))
@@ -447,6 +523,14 @@ function App() {
             return
           }
 
+          const latestSearchStatus = getLastSearchStatus()
+          setSearchRateLimit(getSearchListRateLimitState())
+
+          if (latestSearchStatus.isRateLimited) {
+            setSearchStatus(latestSearchStatus)
+            return
+          }
+
           discoverySessionRef.current = nextDiscoverySession
           setCurrentDiscoverySeed(seedKey)
           setAllTracks(tracks)
@@ -462,11 +546,12 @@ function App() {
           )
 
           setSwipedTrackIds([])
-          setSearchStatus(getLastSearchStatus())
+          setSearchStatus(latestSearchStatus)
         } catch (error) {
           console.error('[CrateDigger][app] search failed', error)
 
           if (!isCancelled) {
+            setSearchRateLimit(getSearchListRateLimitState())
             discoverySessionRef.current = {
               seedKey: '',
               discoverySeed: null,
@@ -482,8 +567,14 @@ function App() {
               source: 'youtube',
               usedFallback: false,
               isQuotaExceeded: Boolean(error?.isDailyQuotaExceeded || error?.quotaReason),
+              isRateLimited: Boolean(error?.isSearchRateLimited),
+              rateLimitReason: error?.rateLimitReason || '',
+              rateLimitResetAt: error?.rateLimitResetAt || 0,
+              rateLimitRemainingMs: error?.retryAfterMs || 0,
               errorReason: error?.quotaReason || error?.reason,
-              message: 'Search failed. Check your YouTube API key or quota.',
+              message: error?.isSearchRateLimited
+                ? error.message
+                : 'Search failed. Check your YouTube API key or quota.',
             })
           }
         } finally {
@@ -967,6 +1058,7 @@ function App() {
       source: 'demo',
       usedFallback: true,
       isQuotaExceeded: false,
+      isRateLimited: false,
       message: 'Demo tracks loaded. Live YouTube search is paused while you browse the app demo.',
     })
     navigate('/search')
@@ -1066,8 +1158,14 @@ function App() {
       }
 
       const latestSearchStatus = getLastSearchStatus()
+      setSearchRateLimit(getSearchListRateLimitState())
 
       if (latestSearchStatus.isQuotaExceeded) {
+        setSearchStatus(latestSearchStatus)
+        return
+      }
+
+      if (latestSearchStatus.isRateLimited) {
         setSearchStatus(latestSearchStatus)
         return
       }
@@ -1084,12 +1182,19 @@ function App() {
     } catch (error) {
       console.error('[CrateDigger][app] lazy discovery expansion failed', error)
 
+      setSearchRateLimit(getSearchListRateLimitState())
       setSearchStatus({
         source: 'youtube',
         usedFallback: false,
         isQuotaExceeded: Boolean(error?.isDailyQuotaExceeded || error?.quotaReason),
+        isRateLimited: Boolean(error?.isSearchRateLimited),
+        rateLimitReason: error?.rateLimitReason || '',
+        rateLimitResetAt: error?.rateLimitResetAt || 0,
+        rateLimitRemainingMs: error?.retryAfterMs || 0,
         errorReason: error?.quotaReason || error?.reason,
-        message: 'Search failed. Check your YouTube API key or quota.',
+        message: error?.isSearchRateLimited
+          ? error.message
+          : 'Search failed. Check your YouTube API key or quota.',
       })
     } finally {
       const latestSession = discoverySessionRef.current
@@ -1203,6 +1308,7 @@ function App() {
     <div
       className={`app-grid overflow-hidden bg-zinc-100 text-zinc-900 ${
         shouldApplyDarkMode ? 'theme-dark' : ''
+      } ${!isDarkMode ? 'theme-light-cream' : ''
       } ${shouldUseSwipeTheme ? 'theme-swipe' : ''} ${
         shouldApplySwipeDarkMode ? 'theme-swipe-dark' : ''
       } ${activeScreen === 'digger' ? 'discover-tooltips-disabled' : ''
@@ -1228,6 +1334,7 @@ function App() {
           isDarkMode={shouldApplyChromeDarkMode}
           isDemoMode={isDemoMode}
           onToggleTheme={() => setIsDarkMode((prev) => !prev)}
+          searchRateLimit={visibleSearchRateLimit}
         />
 
         <div

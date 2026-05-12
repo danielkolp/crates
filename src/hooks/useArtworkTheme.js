@@ -25,6 +25,10 @@ function dimColor(color, factor = 0.6) {
   }
 }
 
+const LIGHT_CREAM_COLOR = { r: 252, g: 250, b: 246 }
+const LIGHT_PANEL_COLOR = { r: 255, g: 254, b: 250 }
+const LIGHT_INK_COLOR = { r: 29, g: 26, b: 22 }
+
 function getLuminance(color) {
   return 0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b
 }
@@ -162,19 +166,20 @@ export function useArtworkTheme(artworkUrl, { isDarkMode = false } = {}) {
             textColor = mixRgb(textColor, { r: 255, g: 255, b: 255 }, 0.55)
           }
         } else {
-          mainColor = dimColor(palette[0], 0.65)
-          const lightCandidates = palette.filter((c) => getLuminance(c) > 180)
-          textColor = lightCandidates.length > 0 ? lightCandidates[0] : { r: 255, g: 255, b: 255 }
+          mainColor = mixRgb(dimColor(palette[0], 0.82), LIGHT_CREAM_COLOR, 0.72)
+          textColor = LIGHT_INK_COLOR
         }
 
         const accentCandidate = palette
           .filter((candidate) => getColorDistance(candidate, mainColor) >= 70)
           .sort((left, right) => getSaturation(right) - getSaturation(left))[0]
 
-        const accentColor = accentCandidate || textColor
-        const surfaceColor = isDarkMode ? mixRgb(mainColor, accentColor, 0.16) : mainColor
-        const cardColor = isDarkMode ? mixRgb(mainColor, accentColor, 0.22) : mainColor
-        const mutedTextColor = isDarkMode ? mixRgb(textColor, mainColor, 0.22) : textColor
+        const accentColor = isDarkMode
+          ? accentCandidate || textColor
+          : mixRgb(accentCandidate || palette[0], LIGHT_CREAM_COLOR, 0.46)
+        const surfaceColor = isDarkMode ? mixRgb(mainColor, accentColor, 0.16) : mixRgb(mainColor, LIGHT_PANEL_COLOR, 0.44)
+        const cardColor = isDarkMode ? mixRgb(mainColor, accentColor, 0.22) : mixRgb(mainColor, LIGHT_PANEL_COLOR, 0.58)
+        const mutedTextColor = isDarkMode ? mixRgb(textColor, mainColor, 0.22) : mixRgb(textColor, mainColor, 0.38)
 
         const mainColorText = toRgbString(mainColor)
         const surfaceColorText = toRgbString(surfaceColor)
@@ -190,13 +195,13 @@ export function useArtworkTheme(artworkUrl, { isDarkMode = false } = {}) {
           accentColor: accentColorText,
           textColor: textColorText,
           mutedTextColor: mutedTextColorText,
-          borderColor: toRgba(textColorText, 0.34),
-          softBorderColor: toRgba(textColorText, 0.22),
+          borderColor: toRgba(textColorText, isDarkMode ? 0.34 : 0.18),
+          softBorderColor: toRgba(textColorText, isDarkMode ? 0.22 : 0.12),
           panelBackground: `linear-gradient(140deg, ${mainColorText} 0%, ${surfaceColorText} 56%, ${cardColorText} 100%)`,
           articleBackground: `linear-gradient(150deg, ${surfaceColorText} 0%, ${mainColorText} 100%)`,
           cardBackground: `linear-gradient(180deg, ${cardColorText} 0%, ${mainColorText} 100%)`,
           mutedBackground: toRgba(cardColorText, 0.95),
-          chipBackground: toRgba(accentColorText, 0.2),
+          chipBackground: toRgba(accentColorText, isDarkMode ? 0.2 : 0.16),
         })
       } catch {
         setDynamicTheme(null)

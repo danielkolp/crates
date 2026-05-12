@@ -17,6 +17,8 @@ import {
 // these flags control local debug output and quota logging.
 const DEV = import.meta.env.DEV
 const QUOTA_DEBUG = DEV || import.meta.env.VITE_YOUTUBE_QUOTA_DEBUG === 'true'
+const USE_RELAXED_DEV_SEARCH_LIMITS =
+  DEV && import.meta.env.VITE_YOUTUBE_RELAXED_SEARCH_LIMITS === 'true'
 
 // these caches keep repeated api calls cheap during a browser session.
 const searchCache = new Map()
@@ -58,6 +60,26 @@ const YOUTUBE_QUOTA_COSTS = {
   playlistItems: 1,
 }
 
+// these client-side limits prevent normal users from burning through search.list quota.
+const NORMAL_SEARCH_LIST_LIMITS = {
+  perMinute: 2,
+  perSession: 25,
+  perDay: 50,
+  minuteWindowMs: 60 * 1000,
+}
+
+// this relaxed profile is only active in dev when VITE_YOUTUBE_RELAXED_SEARCH_LIMITS=true.
+const RELAXED_DEV_SEARCH_LIST_LIMITS = {
+  perMinute: 12,
+  perSession: 250,
+  perDay: 500,
+  minuteWindowMs: 60 * 1000,
+}
+
+const SEARCH_LIST_LIMITS = USE_RELAXED_DEV_SEARCH_LIMITS
+  ? RELAXED_DEV_SEARCH_LIST_LIMITS
+  : NORMAL_SEARCH_LIST_LIMITS
+
 // these cache lifetimes balance freshness with quota savings.
 const TRACK_RESULT_CACHE_TTL_MS = 30 * 60 * 1000
 const SEARCH_RESULT_CACHE_TTL_MS = 6 * 60 * 60 * 1000
@@ -75,6 +97,9 @@ const YOUTUBE_CHANNELS_FIELDS =
 const YOUTUBE_PLAYLIST_ITEMS_FIELDS =
   'etag,items(snippet(resourceId/videoId))'
 const QUOTA_USAGE_STORAGE_KEY = 'crateDigger.youtubeQuotaUsageEstimate'
+const SEARCH_LIST_MINUTE_LIMIT_STORAGE_KEY = 'crateDigger.youtubeSearchListMinuteUsage'
+const SEARCH_LIST_SESSION_LIMIT_STORAGE_KEY = 'crateDigger.youtubeSearchListSessionUsage'
+const SEARCH_LIST_DAILY_LIMIT_STORAGE_KEY = 'crateDigger.youtubeSearchListDailyUsage'
 
 // this descending year list is used to build seeded discovery windows.
 const DISCOVERY_YEARS = Array.from(
@@ -364,7 +389,16 @@ const EXCLUDE_TERMS = [
 let lastSearchStatus = {
   source: 'youtube',
   usedFallback: false,
+  isQuotaExceeded: false,
+  isRateLimited: false,
   message: 'Ready for live YouTube search.',
+}
+
+let searchListMinuteTimestamps = []
+let searchListSessionCount = 0
+let searchListDailyUsage = {
+  date: getQuotaDateKey(),
+  count: 0,
 }
 
 // this pauses async work for small delays such as empty api-key fallback behavior.
@@ -492,6 +526,19 @@ function getSafeLocalStorage() {
   return null
 }
 
+// this safely returns session storage when the browser allows access.
+function getSafeSessionStorage() {
+  try {
+    if (typeof window !== 'undefined' && window.sessionStorage) {
+      return window.sessionStorage
+    }
+  } catch {
+    // ignore storage access failures.
+  }
+
+  return null
+}
+
 // this returns today's date key for quota tracking.
 function getQuotaDateKey() {
   const now = new Date()
@@ -553,6 +600,343 @@ function persistQuotaUsage() {
   } catch {
     // ignore quota estimate persistence failures.
   }
+}
+
+function normalizeLimitCount(value) {
+  const count = Number(value)
+
+  if (!Number.isFinite(count) || count <= 0) {
+    return 0
+  }
+
+  return Math.floor(count)
+}
+
+function pruneSearchListMinuteTimestamps(timestamps = [], now = Date.now()) {
+  const oldestAllowedTimestamp = now - SEARCH_LIST_LIMITS.minuteWindowMs
+
+  return timestamps
+    .map((timestamp) => Number(timestamp))
+    .filter((timestamp) =>
+      Number.isFinite(timestamp) &&
+      timestamp > oldestAllowedTimestamp &&
+      timestamp <= now + SEARCH_LIST_LIMITS.minuteWindowMs
+    )
+    .sort((a, b) => a - b)
+    .slice(-SEARCH_LIST_LIMITS.perMinute)
+}
+
+function readStoredSearchListMinuteTimestamps(now = Date.now()) {
+  const storage = getSafeLocalStorage()
+
+  if (!storage) {
+    return null
+  }
+
+  try {
+    const stored = JSON.parse(storage.getItem(SEARCH_LIST_MINUTE_LIMIT_STORAGE_KEY) || '[]')
+    const timestamps = Array.isArray(stored) ? stored : stored.timestamps
+
+    return pruneSearchListMinuteTimestamps(Array.isArray(timestamps) ? timestamps : [], now)
+  } catch {
+    return []
+  }
+}
+
+function getSearchListMinuteTimestamps(now = Date.now()) {
+  const storedTimestamps = readStoredSearchListMinuteTimestamps(now)
+
+  searchListMinuteTimestamps = storedTimestamps === null
+    ? pruneSearchListMinuteTimestamps(searchListMinuteTimestamps, now)
+    : storedTimestamps
+
+  return searchListMinuteTimestamps
+}
+
+function persistSearchListMinuteTimestamps(timestamps = []) {
+  searchListMinuteTimestamps = pruneSearchListMinuteTimestamps(timestamps)
+
+  const storage = getSafeLocalStorage()
+
+  if (!storage) {
+    return
+  }
+
+  try {
+    storage.setItem(
+      SEARCH_LIST_MINUTE_LIMIT_STORAGE_KEY,
+      JSON.stringify({ timestamps: searchListMinuteTimestamps }),
+    )
+  } catch {
+    // ignore rate limit persistence failures.
+  }
+}
+
+function readStoredSearchListSessionCount() {
+  const storage = getSafeSessionStorage()
+
+  if (!storage) {
+    return null
+  }
+
+  try {
+    const stored = JSON.parse(storage.getItem(SEARCH_LIST_SESSION_LIMIT_STORAGE_KEY) || '0')
+
+    return normalizeLimitCount(typeof stored === 'number' ? stored : stored.count)
+  } catch {
+    return 0
+  }
+}
+
+function getSearchListSessionCount() {
+  const storedCount = readStoredSearchListSessionCount()
+
+  searchListSessionCount = storedCount === null
+    ? normalizeLimitCount(searchListSessionCount)
+    : storedCount
+
+  return searchListSessionCount
+}
+
+function persistSearchListSessionCount(count) {
+  searchListSessionCount = normalizeLimitCount(count)
+
+  const storage = getSafeSessionStorage()
+
+  if (!storage) {
+    return
+  }
+
+  try {
+    storage.setItem(
+      SEARCH_LIST_SESSION_LIMIT_STORAGE_KEY,
+      JSON.stringify({ count: searchListSessionCount }),
+    )
+  } catch {
+    // ignore rate limit persistence failures.
+  }
+}
+
+function readStoredSearchListDailyUsage() {
+  const today = getQuotaDateKey()
+  const storage = getSafeLocalStorage()
+
+  if (!storage) {
+    if (searchListDailyUsage.date !== today) {
+      searchListDailyUsage = {
+        date: today,
+        count: 0,
+      }
+    }
+
+    return null
+  }
+
+  try {
+    const stored = JSON.parse(storage.getItem(SEARCH_LIST_DAILY_LIMIT_STORAGE_KEY) || '{}')
+
+    return {
+      date: today,
+      count: stored.date === today ? normalizeLimitCount(stored.count) : 0,
+    }
+  } catch {
+    return {
+      date: today,
+      count: 0,
+    }
+  }
+}
+
+function getSearchListDailyUsage() {
+  const storedUsage = readStoredSearchListDailyUsage()
+  const today = getQuotaDateKey()
+
+  if (storedUsage === null) {
+    if (searchListDailyUsage.date !== today) {
+      searchListDailyUsage = {
+        date: today,
+        count: 0,
+      }
+    }
+
+    return searchListDailyUsage
+  }
+
+  searchListDailyUsage = storedUsage
+  return searchListDailyUsage
+}
+
+function persistSearchListDailyUsage(usage) {
+  searchListDailyUsage = {
+    date: usage?.date || getQuotaDateKey(),
+    count: normalizeLimitCount(usage?.count),
+  }
+
+  const storage = getSafeLocalStorage()
+
+  if (!storage) {
+    return
+  }
+
+  try {
+    storage.setItem(
+      SEARCH_LIST_DAILY_LIMIT_STORAGE_KEY,
+      JSON.stringify(searchListDailyUsage),
+    )
+  } catch {
+    // ignore rate limit persistence failures.
+  }
+}
+
+function getNextQuotaDateResetAt(nowMs = Date.now()) {
+  const resetDate = new Date(nowMs)
+  resetDate.setHours(24, 0, 0, 0)
+
+  return resetDate.getTime()
+}
+
+function getSearchListRateLimitSnapshot(now = Date.now()) {
+  const minuteTimestamps = getSearchListMinuteTimestamps(now)
+  const sessionCount = getSearchListSessionCount()
+  const dailyUsage = getSearchListDailyUsage()
+  const baseState = {
+    isLimited: false,
+    reason: '',
+    mode: USE_RELAXED_DEV_SEARCH_LIMITS ? 'relaxed-dev' : 'normal',
+    limits: { ...SEARCH_LIST_LIMITS },
+    limit: 0,
+    used: 0,
+    callsInWindow: minuteTimestamps.length,
+    sessionUsed: sessionCount,
+    dailyUsed: dailyUsage.count,
+    remainingMs: 0,
+    resetAt: 0,
+    windowMs: SEARCH_LIST_LIMITS.minuteWindowMs,
+    progress: 0,
+    remainingSearches: {
+      minute: Math.max(SEARCH_LIST_LIMITS.perMinute - minuteTimestamps.length, 0),
+      session: Math.max(SEARCH_LIST_LIMITS.perSession - sessionCount, 0),
+      day: Math.max(SEARCH_LIST_LIMITS.perDay - dailyUsage.count, 0),
+    },
+  }
+
+  if (dailyUsage.count >= SEARCH_LIST_LIMITS.perDay) {
+    const resetAt = getNextQuotaDateResetAt(now)
+
+    return {
+      ...baseState,
+      isLimited: true,
+      reason: 'day',
+      limit: SEARCH_LIST_LIMITS.perDay,
+      used: dailyUsage.count,
+      remainingMs: Math.max(resetAt - now, 0),
+      resetAt,
+      progress: 1,
+    }
+  }
+
+  if (sessionCount >= SEARCH_LIST_LIMITS.perSession) {
+    return {
+      ...baseState,
+      isLimited: true,
+      reason: 'session',
+      limit: SEARCH_LIST_LIMITS.perSession,
+      used: sessionCount,
+      progress: 1,
+    }
+  }
+
+  if (minuteTimestamps.length >= SEARCH_LIST_LIMITS.perMinute) {
+    const resetAt = minuteTimestamps[0] + SEARCH_LIST_LIMITS.minuteWindowMs
+    const remainingMs = Math.max(resetAt - now, 0)
+
+    if (remainingMs > 0) {
+      return {
+        ...baseState,
+        isLimited: true,
+        reason: 'minute',
+        limit: SEARCH_LIST_LIMITS.perMinute,
+        used: minuteTimestamps.length,
+        remainingMs,
+        resetAt,
+        progress: 1 - (remainingMs / SEARCH_LIST_LIMITS.minuteWindowMs),
+      }
+    }
+  }
+
+  return baseState
+}
+
+// this exposes the client-side search.list limiter state to the app chrome.
+export function getSearchListRateLimitState() {
+  return getSearchListRateLimitSnapshot()
+}
+
+function formatSearchListRateLimitDuration(ms = 0) {
+  const totalSeconds = Math.max(Math.ceil(Number(ms || 0) / 1000), 0)
+
+  if (totalSeconds < 60) {
+    return `${totalSeconds} seconds`
+  }
+
+  const minutes = Math.ceil(totalSeconds / 60)
+
+  if (minutes < 60) {
+    return `${minutes} minutes`
+  }
+
+  const hours = Math.floor(minutes / 60)
+  const remainingMinutes = minutes % 60
+
+  return remainingMinutes > 0
+    ? `${hours} hours ${remainingMinutes} minutes`
+    : `${hours} hours`
+}
+
+function getSearchListRateLimitMessage(state) {
+  if (state.reason === 'day') {
+    return `Client daily search limit reached (${state.used}/${state.limit}). Search again in ${formatSearchListRateLimitDuration(state.remainingMs)}.`
+  }
+
+  if (state.reason === 'session') {
+    return `Client session search limit reached (${state.used}/${state.limit}). Start a new browser session to search again.`
+  }
+
+  return `Client search rate limit reached. Search again in ${formatSearchListRateLimitDuration(state.remainingMs)}.`
+}
+
+function createSearchListRateLimitError(state) {
+  const error = new Error(getSearchListRateLimitMessage(state))
+
+  error.name = 'YouTubeSearchRateLimitError'
+  error.isSearchRateLimited = true
+  error.rateLimitReason = state.reason
+  error.retryAfterMs = state.remainingMs
+  error.rateLimitResetAt = state.resetAt
+  error.rateLimit = state
+
+  return error
+}
+
+function reserveSearchListRequest() {
+  const now = Date.now()
+  const state = getSearchListRateLimitSnapshot(now)
+
+  if (state.isLimited) {
+    throw createSearchListRateLimitError(state)
+  }
+
+  persistSearchListMinuteTimestamps([...getSearchListMinuteTimestamps(now), now])
+  persistSearchListSessionCount(getSearchListSessionCount() + 1)
+
+  const dailyUsage = getSearchListDailyUsage()
+
+  persistSearchListDailyUsage({
+    date: getQuotaDateKey(),
+    count: dailyUsage.count + 1,
+  })
+
+  return getSearchListRateLimitSnapshot(now)
 }
 
 // this records estimated youtube quota use and logs it in debug mode.
@@ -736,6 +1120,8 @@ function setSearchStatus(source, usedFallback, message, details = {}) {
   lastSearchStatus = {
     source,
     usedFallback,
+    isQuotaExceeded: false,
+    isRateLimited: false,
     message,
     ...details,
   }
@@ -1690,6 +2076,10 @@ async function fetchYouTubeJson(url, options = {}) {
     headers['If-None-Match'] = cacheEntry.etag
   }
 
+  if (endpoint === 'search.list') {
+    reserveSearchListRequest()
+  }
+
   recordQuotaUsage({
     endpoint,
     cost: quotaCost,
@@ -1718,6 +2108,17 @@ async function fetchYouTubeJson(url, options = {}) {
       }
 
       try {
+        if (endpoint === 'search.list') {
+          reserveSearchListRequest()
+        }
+
+        recordQuotaUsage({
+          endpoint,
+          cost: quotaCost,
+          requestKey,
+          cacheStatus: 'retry-network',
+        })
+
         response = await fetch(url)
       } catch (retryError) {
         if (cacheEntry?.data) {
@@ -2569,13 +2970,29 @@ export async function searchTracks(query = '', filters = {}) {
       console.error('[CrateDigger][youtube] request failed', error)
 
       // quota errors get a specific status so the overlay can explain what happened.
-      if (isYouTubeDailyQuotaError(error)) {
+      if (error?.isSearchRateLimited) {
+        const rateLimit = error.rateLimit || getSearchListRateLimitSnapshot()
+
+        setSearchStatus(
+          'youtube',
+          false,
+          getSearchListRateLimitMessage(rateLimit),
+          {
+            isRateLimited: true,
+            rateLimitReason: rateLimit.reason,
+            rateLimitResetAt: rateLimit.resetAt,
+            rateLimitRemainingMs: rateLimit.remainingMs,
+            searchRateLimit: rateLimit,
+          },
+        )
+      } else if (isYouTubeDailyQuotaError(error)) {
         setSearchStatus(
           'youtube',
           false,
           'YouTube API daily quota exceeded. Discovery will resume after the quota resets or you update the API key.',
           {
             isQuotaExceeded: true,
+            isRateLimited: false,
             errorReason: error.quotaReason || error.reason || 'quotaExceeded',
           },
         )

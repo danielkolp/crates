@@ -17,7 +17,8 @@ const SKIP_ICON_SRC = publicAsset('images/x.png')
 const SAVE_ICON_SRC = publicAsset('images/heart.png')
 const GEM_ICON_SRC = publicAsset('images/diamond.png')
 const DARK_BEND_FALLBACK_COLORS = ['rgb(16, 185, 129)', 'rgb(34, 211, 238)', 'rgb(250, 204, 21)', 'rgb(244, 244, 245)']
-const LIGHT_BEND_FALLBACK_COLORS = ['rgb(20, 184, 166)', 'rgb(59, 130, 246)', 'rgb(250, 204, 21)', 'rgb(24, 24, 27)']
+const LIGHT_MODE_CREAM_RGB = 'rgb(252, 250, 246)'
+const LIGHT_BEND_FALLBACK_COLORS = ['rgb(154, 217, 205)', 'rgb(167, 196, 245)', 'rgb(248, 217, 128)', 'rgb(236, 184, 166)']
 
 function formatRate(value) {
   return `${(value * 100).toFixed(1)}%`
@@ -290,11 +291,11 @@ function SwipeMode({
       }
 
       return [
-        dynamicTheme.accentColor,
-        dynamicTheme.mainColor,
-        dynamicTheme.surfaceColor,
-        mixRgbString(dynamicTheme.cardColor, 'rgb(255, 255, 255)', 0.2),
-        mixRgbString(dynamicTheme.textColor, dynamicTheme.accentColor, 0.16),
+        mixRgbString(dynamicTheme.accentColor, LIGHT_MODE_CREAM_RGB, 0.46),
+        mixRgbString(dynamicTheme.mainColor, LIGHT_MODE_CREAM_RGB, 0.26),
+        mixRgbString(dynamicTheme.surfaceColor, 'rgb(255, 255, 255)', 0.18),
+        mixRgbString(dynamicTheme.cardColor, 'rgb(255, 255, 255)', 0.12),
+        mixRgbString(dynamicTheme.accentColor, 'rgb(255, 255, 255)', 0.68),
       ]
     },
     [dynamicTheme, isDarkMode],
@@ -561,7 +562,7 @@ function SwipeMode({
       <section className={`panel grid h-full min-h-0 place-items-center p-8 ${isDarkMode ? 'bg-zinc-950 text-white' : 'bg-white text-zinc-900'}`}>
         <div className="space-y-2 text-center">
           <p className="text-2xl font-semibold">No tracks in queue</p>
-          <p className={isDarkMode ? 'text-zinc-300' : 'text-zinc-600'}>Adjust filters or search to refill swipe mode.</p>
+          <p className={isDarkMode ? 'text-zinc-300' : 'text-zinc-600'}>Use the "regen" button on the bottom left to refill the crate.</p>
         </div>
       </section>
     )
@@ -626,12 +627,12 @@ function SwipeMode({
             parallax={0.18}
             noise={0.2}
             iterations={4}
-            intensity={isDarkMode ? 1.85 : 2.15}
-            bandWidth={isDarkMode ? 6.8 : 8.4}
+            intensity={isDarkMode ? 1.85 : 1.18}
+            bandWidth={isDarkMode ? 6.8 : 6.1}
             style={{
-              opacity: isDarkMode ? 0.82 : 0.66,
+              opacity: isDarkMode ? 0.82 : 0.78,
               mixBlendMode: isDarkMode ? 'screen' : 'normal',
-              filter: isDarkMode ? 'saturate(1.55) contrast(1.16)' : 'saturate(1.85) contrast(1.22)',
+              filter: isDarkMode ? 'saturate(1.55) contrast(1.16)' : 'saturate(1.1) contrast(0.94) brightness(1.06)',
             }}
           />
         </div>
@@ -764,22 +765,22 @@ function SwipeMode({
                     <div className="swipe-card-stats mt-2 grid grid-cols-2 gap-1 text-[11px] sm:text-xs md:grid-cols-4">
                       <div className="rounded-xl border p-1.5" style={themedBoxStyle}>
                         <p className="muted-label mb-1" style={mutedLabelStyle}>Views</p>
-                        <p className="font-semibold">{track.views.toLocaleString('en-US')}</p>
+                        <p className="font-semibold text-xl">{track.views.toLocaleString('en-US')}</p>
                       </div>
 
                       <div className="rounded-xl border p-1.5" style={themedBoxStyle}>
                         <p className="muted-label mb-1" style={mutedLabelStyle}>Likes</p>
-                        <p className="font-semibold">{track.likes.toLocaleString('en-US')}</p>
+                        <p className="font-semibold text-xl">{track.likes.toLocaleString('en-US')}</p>
                       </div>
 
                       <div className="rounded-xl border p-1.5" style={themedBoxStyle}>
                         <p className="muted-label mb-1" style={mutedLabelStyle}>Comments</p>
-                        <p className="font-semibold">{track.comments.toLocaleString('en-US')}</p>
+                        <p className="font-semibold text-xl">{track.comments.toLocaleString('en-US')}</p>
                       </div>
 
                       <div className="rounded-xl border p-1.5" style={themedBoxStyle}>
-                        <p className="muted-label mb-1" style={mutedLabelStyle}>Gem Score</p>
-                        <p className="font-semibold">{track.gemScore.toFixed(1)}</p>
+                        <p className="muted-label mb-1" style={mutedLabelStyle}>Score</p>
+                        <p className="font-semibold text-xl">{track.gemScore.toFixed(1)}</p>
                       </div>
                     </div>
                   </div>
