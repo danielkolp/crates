@@ -1139,6 +1139,13 @@
     --range-thumb-border: #000000;
   }
 
+  .theme-dark .range-control,
+  .theme-dark-chrome .range-control {
+    background: transparent !important;
+    border-color: transparent !important;
+    color: inherit !important;
+  }
+
   .hover-swap {
     position: relative;
     justify-content: center;

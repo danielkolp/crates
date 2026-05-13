@@ -709,7 +709,7 @@ function BottomPlayer({
   }, [isScrubbing, onProgressChange, trackDurationSeconds])
 
   useEffect(() => {
-    if (!isPlaying) {
+    if (!currentTrack?.youtubeVideoId) {
       if (progressIntervalRef.current) {
         window.clearInterval(progressIntervalRef.current)
         progressIntervalRef.current = null
@@ -724,8 +724,10 @@ function BottomPlayer({
 
     fallbackTickRef.current = performance.now()
     progressIntervalRef.current = window.setInterval(() => {
+      const tickNow = performance.now()
       let nextPercent = null
       let usedPlayerTimeline = false
+      let canUseFallbackTimeline = false
 
       try {
         const playerStates = window.YT?.PlayerState || {}
@@ -741,6 +743,9 @@ function BottomPlayer({
         const playerTimelineActive =
           playerState === playerStates.PLAYING ||
           playerState === playerStates.BUFFERING
+        const playerActivelyPlaying = playerState === playerStates.PLAYING
+
+        canUseFallbackTimeline = playerActivelyPlaying || currentTime > 0
 
         if (
           isPlayingRef.current &&
@@ -753,27 +758,38 @@ function BottomPlayer({
           playerRef.current.playVideo?.()
         }
 
-        if (duration > 0 && currentTime >= 0) {
-          if (playerTimelineActive) {
-            usedPlayerTimeline = true
-            setPlaybackLoading(false)
-            const quantizedSeconds = Math.floor(currentTime)
-            nextPercent = Math.min((quantizedSeconds / duration) * 100, 100)
-          } else {
-            nextPercent = progressValueRef.current
+        if (duration > 0 && currentTime >= 0 && !playerVideoMismatch) {
+          if (playerTimelineActive || currentTime > 0) {
+            usedPlayerTimeline = playerActivelyPlaying
+            if (playerActivelyPlaying || !isPlayingRef.current) {
+              setPlaybackLoading(false)
+            }
+            nextPercent = Math.min((currentTime / duration) * 100, 100)
           }
         }
       } catch {
         // Ignore occasional transient YouTube API errors.
       }
 
-      if (nextPercent === null) {
-        fallbackTickRef.current = performance.now()
-      } else {
-        fallbackTickRef.current = performance.now()
+      if (!isPlayingRef.current) {
+        fallbackTickRef.current = tickNow
+      }
+
+      if (
+        nextPercent === null &&
+        isPlayingRef.current &&
+        canUseFallbackTimeline &&
+        trackDurationSeconds > 0
+      ) {
+        const previousTick = fallbackTickRef.current || tickNow
+        const elapsedMs = Math.max(tickNow - previousTick, 0)
+        const elapsedPercent = (elapsedMs / (trackDurationSeconds * 1000)) * 100
+
+        nextPercent = Math.min(progressValueRef.current + elapsedPercent, 99.5)
       }
 
       if (nextPercent !== null) {
+        fallbackTickRef.current = tickNow
         progressValueRef.current = nextPercent
         if (!isScrubbingRef.current) {
           onProgressChange?.(nextPercent)
@@ -783,7 +799,7 @@ function BottomPlayer({
           onTrackEnd?.()
         }
       }
-    }, 1000)
+    }, 500)
 
     return () => {
       if (progressIntervalRef.current) {
@@ -791,7 +807,7 @@ function BottomPlayer({
         progressIntervalRef.current = null
       }
     }
-  }, [currentTrack?.youtubeVideoId, ensureRequestedVideoLoaded, isPlayerReady, isPlaying, onProgressChange, onTrackEnd, setPlaybackLoading, trackDurationSeconds])
+  }, [currentTrack?.youtubeVideoId, ensureRequestedVideoLoaded, onProgressChange, onTrackEnd, setPlaybackLoading, trackDurationSeconds])
 
   useEffect(() => {
     if (!isPlayerReady || !playerRef.current) {
