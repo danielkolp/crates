@@ -793,7 +793,7 @@ function SwipeMode({
             </div>
           </div>
 
-          <p className="text-center text-[11px]" style={{ color: themedMutedTextColor }}>
+          <p className="swipe-action-hint text-center text-[11px]" style={{ color: themedMutedTextColor }}>
             Swipe left for X, right for heart, down for diamond
           </p>
 

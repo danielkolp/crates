@@ -1329,10 +1329,11 @@
       gap: 0.35rem !important;
       overflow: hidden;
       padding-block: 0.15rem;
+      padding-bottom: 3rem;
     }
 
     .swipe-card-shell {
-      width: min(100%, clamp(15.75rem, calc(45dvh - 7.5rem), 20.75rem));
+      width: min(100%, clamp(14.5rem, calc(40dvh - 6rem), 19rem));
       padding-top: 0 !important;
       padding-bottom: 0 !important;
     }
@@ -1372,7 +1373,15 @@
     }
 
     .swipe-action-row {
+      position: absolute !important;
+      right: 0;
+      bottom: 0.25rem;
+      left: 0;
       gap: 0.5rem !important;
+    }
+
+    .swipe-action-hint {
+      display: none;
     }
 
     .swipe-action-button {
@@ -1391,8 +1400,12 @@
   }
 
   @media (max-height: 700px) and (min-width: 768px) {
+    .swipe-stage {
+      padding-bottom: 2.55rem;
+    }
+
     .swipe-card-shell {
-      width: min(100%, clamp(14rem, calc(41dvh - 6rem), 17.75rem));
+      width: min(100%, clamp(12.5rem, calc(35dvh - 4.75rem), 16.25rem));
     }
 
     .swipe-card-meta {
