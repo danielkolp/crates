@@ -797,11 +797,11 @@ function SwipeMode({
             Swipe left for X, right for heart, down for diamond
           </p>
 
-          <div className="relative z-0 flex items-center justify-center gap-2.5 pt-0.5">
+          <div className="swipe-action-row relative z-0 flex items-center justify-center gap-2.5 pt-0.5">
             <button
               type="button"
               onClick={() => handleButtonAction('skip')}
-              className="tooltip-anchor grid h-10 w-10 place-items-center rounded-full border text-lg font-semibold transition hover:opacity-85 md:h-11 md:w-11"
+              className="tooltip-anchor swipe-action-button grid h-10 w-10 place-items-center rounded-full border text-lg font-semibold transition hover:opacity-85 md:h-11 md:w-11"
               style={actionButtonStyle}
               aria-label="Skip track"
               data-tooltip="Skip track"
@@ -812,7 +812,7 @@ function SwipeMode({
             <button
               type="button"
               onClick={() => handleButtonAction('save')}
-              className="tooltip-anchor grid h-10 w-10 place-items-center rounded-full border text-lg font-semibold transition hover:opacity-85 md:h-11 md:w-11"
+              className="tooltip-anchor swipe-action-button grid h-10 w-10 place-items-center rounded-full border text-lg font-semibold transition hover:opacity-85 md:h-11 md:w-11"
               style={saveActionButtonStyle}
               aria-label="Save track"
               data-tooltip={isLiked ? 'Saved to liked' : 'Save track'}
@@ -823,7 +823,7 @@ function SwipeMode({
             <button
               type="button"
               onClick={() => handleButtonAction('gem')}
-              className="tooltip-anchor grid h-10 w-10 place-items-center rounded-full border text-lg font-semibold transition hover:opacity-85 md:h-11 md:w-11"
+              className="tooltip-anchor swipe-action-button grid h-10 w-10 place-items-center rounded-full border text-lg font-semibold transition hover:opacity-85 md:h-11 md:w-11"
               style={actionButtonStyle}
               aria-label="Gem track"
               data-tooltip="Gem track"
@@ -834,7 +834,7 @@ function SwipeMode({
             <button
               type="button"
               onClick={onTogglePlayback}
-              className="tooltip-anchor grid h-10 w-10 place-items-center rounded-full border text-sm font-bold transition hover:opacity-85 md:h-11 md:w-11"
+              className="tooltip-anchor swipe-action-button grid h-10 w-10 place-items-center rounded-full border text-sm font-bold transition hover:opacity-85 md:h-11 md:w-11"
               style={actionButtonStyle}
               aria-label={isPlaybackLoading ? 'Loading track' : isPlaying ? 'Pause track' : 'Play track'}
               data-tooltip={isPlaybackLoading ? 'Loading track' : isPlaying ? 'Pause track' : 'Play track'}
