@@ -609,8 +609,8 @@
     background-position: center;
     background-size: cover;
     opacity: var(--track-row-artwork-opacity);
-    filter: blur(18px) saturate(1.5) contrast(1.08);
-    transform: scale(1.08);
+    filter: blur(4px) saturate(1.4) contrast(1.04) brightness(1.2);
+    transform: scale(1.045);
     transition: opacity 160ms ease;
   }
 

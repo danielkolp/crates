@@ -214,6 +214,7 @@ function BottomPlayer({
   const loadedVideoIdRef = useRef('')
   const progressValueRef = useRef(0)
   const fallbackTickRef = useRef(0)
+  const trackEndedRef = useRef(false)
   const isPlayingRef = useRef(isPlaying)
   const isScrubbingRef = useRef(false)
   const scrubPercentRef = useRef(null)
@@ -236,6 +237,22 @@ function BottomPlayer({
     onPlaybackLoadingChangeRef.current?.(Boolean(nextLoading), trackId || null)
   }, [])
 
+  const completeCurrentTrack = useCallback(() => {
+    if (trackEndedRef.current) {
+      return
+    }
+
+    trackEndedRef.current = true
+    clearPlaySyncTimers()
+    isPlayingRef.current = false
+    setPlaybackLoading(false)
+    progressValueRef.current = 100
+    fallbackTickRef.current = performance.now()
+    onProgressChangeRef.current?.(100)
+    onPlaybackStateChangeRef.current?.(false)
+    onTrackEndRef.current?.()
+  }, [clearPlaySyncTimers, setPlaybackLoading])
+
   const ensureRequestedVideoLoaded = useCallback((videoId, { shouldPlay = isPlayingRef.current } = {}) => {
     const player = playerRef.current
 
@@ -251,6 +268,8 @@ function BottomPlayer({
     if (!needsVideoLoad) {
       return false
     }
+
+    trackEndedRef.current = false
 
     if (shouldPlay) {
       player.loadVideoById(videoId)
@@ -308,7 +327,7 @@ function BottomPlayer({
 
     DIRECT_PLAY_RETRY_DELAYS.forEach((delay) => {
       const timerId = window.setTimeout(() => {
-        if (currentVideoIdRef.current !== videoId || !isPlayingRef.current) {
+        if (currentVideoIdRef.current !== videoId || !isPlayingRef.current || trackEndedRef.current) {
           return
         }
 
@@ -341,7 +360,11 @@ function BottomPlayer({
 
     PLAY_SYNC_RETRY_DELAYS.forEach((delay) => {
       const timerId = window.setTimeout(() => {
-        if (currentVideoIdRef.current !== videoId || isPlayingRef.current !== shouldPlay) {
+        if (
+          currentVideoIdRef.current !== videoId ||
+          isPlayingRef.current !== shouldPlay ||
+          (shouldPlay && trackEndedRef.current)
+        ) {
           return
         }
 
@@ -365,6 +388,9 @@ function BottomPlayer({
     const videoId = currentVideoIdRef.current
 
     isPlayingRef.current = shouldPlay
+    if (shouldPlay) {
+      trackEndedRef.current = false
+    }
     syncYouTubePlayback({ videoId, shouldPlay, force: true })
     schedulePlaybackSync({ videoId, shouldPlay })
   }
@@ -455,6 +481,7 @@ function BottomPlayer({
       }
       progressValueRef.current = 0
       fallbackTickRef.current = performance.now()
+      trackEndedRef.current = false
       onProgressChange?.(0)
     }
   }, [currentTrack?.id, currentTrack?.youtubeVideoId, onProgressChange, clearPlaySyncTimers])
@@ -484,6 +511,7 @@ function BottomPlayer({
     loadedVideoIdRef.current = ''
     progressValueRef.current = 0
     fallbackTickRef.current = 0
+    trackEndedRef.current = false
     isPlayingRef.current = false
     setPlaybackLoading(false)
     onProgressChange?.(0)
@@ -573,6 +601,7 @@ function BottomPlayer({
               }
 
               if (event.data === playerStates.PLAYING) {
+                trackEndedRef.current = false
                 setPlaybackLoading(false)
                 fallbackTickRef.current = performance.now()
                 return
@@ -588,7 +617,7 @@ function BottomPlayer({
 
               if (event.data === playerStates.CUED) {
                 fallbackTickRef.current = performance.now()
-                if (isPlayingRef.current) {
+                if (isPlayingRef.current && !trackEndedRef.current) {
                   setPlaybackLoading(true)
                   try {
                     playerRef.current?.playVideo()
@@ -602,7 +631,7 @@ function BottomPlayer({
 
               if (event.data === playerStates.PAUSED) {
                 fallbackTickRef.current = performance.now()
-                if (isPlayingRef.current) {
+                if (isPlayingRef.current && !trackEndedRef.current) {
                   setPlaybackLoading(true)
                   scheduleDirectPlayRetries()
                 } else {
@@ -612,13 +641,7 @@ function BottomPlayer({
               }
 
               if (event.data === playerStates.ENDED) {
-                clearPlaySyncTimers()
-                isPlayingRef.current = false
-                setPlaybackLoading(false)
-                progressValueRef.current = 100
-                onProgressChangeRef.current?.(100)
-                onPlaybackStateChangeRef.current?.(false)
-                onTrackEndRef.current?.()
+                completeCurrentTrack()
               }
             },
           },
@@ -630,7 +653,7 @@ function BottomPlayer({
           setIsPlayerReady(false)
         }
       })
-  }, [clearPlaySyncTimers, currentTrack?.youtubeVideoId, ensureRequestedVideoLoaded, scheduleDirectPlayRetries, setPlaybackLoading])
+  }, [clearPlaySyncTimers, completeCurrentTrack, currentTrack?.youtubeVideoId, ensureRequestedVideoLoaded, scheduleDirectPlayRetries, setPlaybackLoading])
 
   useEffect(() => {
     const commandAppliesToTrack =
@@ -747,9 +770,15 @@ function BottomPlayer({
 
         canUseFallbackTimeline = playerActivelyPlaying || currentTime > 0
 
+        if (playerState === playerStates.ENDED) {
+          completeCurrentTrack()
+          return
+        }
+
         if (
           isPlayingRef.current &&
           playerRef.current &&
+          !trackEndedRef.current &&
           (!playerTimelineActive || playerVideoMismatch)
         ) {
           ensureRequestedVideoLoaded(currentVideoIdRef.current, { shouldPlay: true })
@@ -796,7 +825,7 @@ function BottomPlayer({
         }
 
         if (!isScrubbingRef.current && usedPlayerTimeline && nextPercent >= 100) {
-          onTrackEnd?.()
+          completeCurrentTrack()
         }
       }
     }, 500)
@@ -807,7 +836,7 @@ function BottomPlayer({
         progressIntervalRef.current = null
       }
     }
-  }, [currentTrack?.youtubeVideoId, ensureRequestedVideoLoaded, onProgressChange, onTrackEnd, setPlaybackLoading, trackDurationSeconds])
+  }, [completeCurrentTrack, currentTrack?.youtubeVideoId, ensureRequestedVideoLoaded, onProgressChange, setPlaybackLoading, trackDurationSeconds])
 
   useEffect(() => {
     if (!isPlayerReady || !playerRef.current) {

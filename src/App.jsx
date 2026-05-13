@@ -1594,6 +1594,9 @@ function App() {
         onTrackEnd={() => {
           setIsPlaying(false)
           setPlaybackLoadingTrackId(null)
+          if (currentTrack?.id) {
+            requestPlaybackSync(currentTrack.id, false)
+          }
         }}
         onHeightChange={setPlayerReservedHeight}
         hideSwipeActions={activeScreen === 'swipe'}

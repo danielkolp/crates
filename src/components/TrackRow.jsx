@@ -172,8 +172,8 @@ function TrackRow({
   const themedRowStyle = shouldThemeRow
     ? {
         '--track-row-artwork': toCssUrl(rowArtworkUrl),
-        '--track-row-artwork-opacity': isDarkMode ? 0.22 : 0.18,
-        '--track-row-artwork-hover-opacity': isDarkMode ? 0.32 : 0.28,
+        '--track-row-artwork-opacity': isDarkMode ? 0.18 : 0.15,
+        '--track-row-artwork-hover-opacity': isDarkMode ? 0.24 : 0.26,
         '--track-row-bg': dynamicTheme
           ? isDarkMode
             ? `linear-gradient(90deg, ${toRgba(dynamicTheme.cardColor, 0.74)} 0%, ${toRgba(dynamicTheme.mainColor, 0.64)} 100%)`
