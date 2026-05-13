@@ -150,6 +150,18 @@
     font-size: 14px;
   }
 
+  @media (min-width: 1024px) {
+    html {
+      font-size: clamp(11.5px, 0.84vw, 13px);
+    }
+  }
+
+  @media (min-width: 1680px) {
+    html {
+      font-size: 14px;
+    }
+  }
+
   body {
     font-family: 'Space Grotesk', sans-serif;
     background:
