@@ -264,7 +264,7 @@ function Sidebar({
                       ? 'gems-tab gems-tab-active bg-amber-50 text-amber-900 shadow-[inset_2px_0_0_#f59e0b]'
                       : 'gems-tab gems-tab-inactive text-amber-700 hover:bg-amber-50'
                     : activeScreen === item.id
-                      ? 'bg-white/80 text-zinc-950 shadow-[inset_2px_0_0_#18181b]'
+                      ? 'is-nav-active bg-white/80 text-zinc-950'
                       : 'text-zinc-500 hover:bg-white/70 hover:text-zinc-900',
                 ].join(' ')}
                 data-tooltip={`Go to ${item.label}`}

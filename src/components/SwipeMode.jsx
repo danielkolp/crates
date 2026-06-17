@@ -47,6 +47,42 @@ function isShortcutEditableTarget(target) {
   return Boolean(target.closest('input, textarea, select, [contenteditable="true"]'))
 }
 
+const GENRE_BPM = {
+  'uk garage': 132,
+  breaks: 130,
+  'minimal house': 124,
+  'bass house': 126,
+  techno: 132,
+  'deep house': 122,
+  'progressive house': 126,
+  electro: 128,
+  'afro house': 123,
+  'dub techno': 118,
+  jungle: 168,
+  'minimal techno': 129,
+  leftfield: 124,
+  'tech house': 126,
+}
+
+function hashText(value) {
+  return String(value || '').split('').reduce((hash, char) => hash + char.charCodeAt(0), 0)
+}
+
+// Best-effort BPM so the swipe stage can pulse in time with the track.
+function estimateTrackBpm(track) {
+  const explicitBpm = Number(track?.bpm)
+  if (Number.isFinite(explicitBpm) && explicitBpm >= 70 && explicitBpm <= 190) {
+    return explicitBpm
+  }
+
+  const genreBpm = GENRE_BPM[String(track?.genre || '').toLowerCase()]
+  if (Number.isFinite(genreBpm)) {
+    return genreBpm
+  }
+
+  return 118 + (hashText(track?.youtubeVideoId || track?.id || 'track') % 18)
+}
+
 function SwipeMode({
   track,
   nextTracks,
@@ -68,6 +104,8 @@ function SwipeMode({
   onThemeChange,
 }) {
   const cardRef = useRef(null)
+  const stageRef = useRef(null)
+  const beatValueRef = useRef(0)
   const dragSessionRef = useRef({ pointerId: null, startX: 0, startY: 0 })
   const releaseTimerRef = useRef(null)
   const previousUserSelectRef = useRef('')
@@ -163,6 +201,44 @@ function SwipeMode({
   useEffect(() => {
     onThemeChange?.(dynamicTheme)
   }, [dynamicTheme, onThemeChange])
+
+  // Beat clock: drive --beat (0..1) on the stage each frame so the card breathes,
+  // the glow throbs, and the eq bounces in time. Spin stays at a real 33 1/3 rpm.
+  const trackBpm = useMemo(() => estimateTrackBpm(track), [track])
+
+  useEffect(() => {
+    const stage = stageRef.current
+    if (!stage) return undefined
+
+    const bpm = trackBpm
+    stage.style.setProperty('--spin-dur', '1.8s')
+    stage.style.setProperty('--eq-dur', `${(60 / bpm).toFixed(3)}s`)
+
+    const prefersReducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+
+    if (!isPlaying || prefersReducedMotion) {
+      beatValueRef.current = 0
+      stage.style.setProperty('--beat', '0')
+      return undefined
+    }
+
+    const beatDurationMs = (60 / bpm) * 1000
+    const startedAt = performance.now()
+    let frameId = 0
+
+    const tick = (now) => {
+      const phase = ((now - startedAt) % beatDurationMs) / beatDurationMs
+      // sharp attack, quick decay — a kick-drum envelope
+      const target = Math.exp(-phase * 7)
+      beatValueRef.current += (target - beatValueRef.current) * 0.4
+      stage.style.setProperty('--beat', beatValueRef.current.toFixed(3))
+      frameId = window.requestAnimationFrame(tick)
+    }
+
+    frameId = window.requestAnimationFrame(tick)
+
+    return () => window.cancelAnimationFrame(frameId)
+  }, [isPlaying, trackBpm])
 
   useEffect(() => {
     if (!isDragging) return undefined
@@ -389,8 +465,14 @@ function SwipeMode({
 
   const darkFallbackActive = isDarkMode && !dynamicTheme
 
-  const cardStyle = {
+  const cardMotionStyle = {
     transform: `translate3d(${transformX}px, ${transformY}px, 0) rotate(${rotate}deg)`,
+    transition: isDragging ? 'none' : 'transform 240ms ease, opacity 240ms ease',
+    opacity: queuedAction ? 0.92 : 1,
+  }
+
+  const cardStyle = {
+    ...cardMotionStyle,
     transition: isDragging ? 'none' : 'transform 240ms ease, box-shadow 240ms ease, border-color 240ms ease, opacity 240ms ease',
     touchAction: 'none',
     userSelect: 'none',
@@ -405,7 +487,6 @@ function SwipeMode({
           : direction === 'down'
             ? 'rgba(245, 158, 11, 0.55)'
             : themedCardBorderColor,
-    opacity: queuedAction ? 0.92 : 1,
   }
 
   const noteSwipeInteraction = useCallback(() => {
@@ -687,8 +768,19 @@ function SwipeMode({
           </div>
         </div>
 
-        <div className="swipe-stage relative z-30 flex min-h-0 flex-col items-center justify-center gap-2 overflow-visible pr-0 md:pr-1">
+        <div
+          ref={stageRef}
+          className={[
+            'swipe-stage relative z-30 flex min-h-0 flex-col items-center justify-center gap-2 overflow-visible pr-0 md:pr-1',
+            isPlaying ? 'is-spinning' : '',
+          ].join(' ')}
+          style={{
+            '--swipe-glow-color': dynamicTheme ? toRgba(dynamicTheme.accentColor, 0.55) : 'rgba(226, 85, 45, 0.55)',
+            '--swipe-vinyl-label': dynamicTheme?.accentColor || 'rgb(226, 85, 45)',
+          }}
+        >
           <div className="swipe-card-shell relative mx-auto w-full max-w-[360px] overflow-visible px-3 pb-1 pt-1 sm:px-5">
+            <span className="swipe-glow" aria-hidden="true" />
             <div
               className="pointer-events-none absolute left-0 top-12 z-50 transition-all duration-150"
               style={{ opacity: direction === 'left' ? Math.min(progressOpacity, 1) : 0 }}
@@ -729,18 +821,32 @@ function SwipeMode({
             </div>
 
             <div className={`relative z-10 ${isHintActive && !isDragging && !queuedAction ? 'swipe-card-hint' : ''}`}>
+              <span className="swipe-vinyl-anchor" style={cardMotionStyle} aria-hidden="true">
+                <span className="swipe-vinyl" />
+              </span>
               <div
                 ref={cardRef}
-                className="swipe-card relative overflow-hidden rounded-2xl border-2"
+                className="swipe-card relative z-10 overflow-hidden rounded-2xl border-2"
                 style={cardStyle}
               >
                 <div className="pointer-events-none relative z-0 select-none">
                   <div className="absolute inset-x-0 top-3 z-10 flex justify-center">
                     <span
-                      className="rounded-full border px-2.5 py-1 text-[10px] font-semibold tracking-[0.12em] shadow-sm"
+                      className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold tracking-[0.12em] shadow-sm"
                       style={hintBadgeStyle}
                     >
-                      SWIPE ME
+                      {isPlaying ? (
+                        <>
+                          <span className="swipe-eq" aria-hidden="true">
+                            <span />
+                            <span />
+                            <span />
+                            <span />
+                          </span>                      
+                        </>
+                      ) : (
+                        'SWIPE ME'
+                      )}
                     </span>
                   </div>
 

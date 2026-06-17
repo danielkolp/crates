@@ -145,13 +145,6 @@ function splitTrackTitle(title) {
   }
 }
 
-function toCssUrl(value) {
-  const source = String(value || '').trim()
-  if (!source) return 'none'
-
-  return `url("${source.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}")`
-}
-
 function TrackRow({
   track,
   isPlaying,
@@ -169,25 +162,31 @@ function TrackRow({
   const shouldThemeRow = Boolean(rowArtworkUrl || dynamicTheme)
   const rowTextColor = isDarkMode ? dynamicTheme?.textColor || 'rgb(244, 244, 245)' : 'rgb(24, 24, 27)'
   const rowMutedColor = isDarkMode && dynamicTheme ? toRgba(dynamicTheme.textColor, 0.68) : isDarkMode ? 'rgba(212, 212, 216, 0.74)' : 'rgba(63, 63, 70, 0.78)'
+  // Spine + disc-label colour pulled from the artwork; falls back to the brand label accent.
+  const spineColor = dynamicTheme?.accentColor || 'rgb(226, 85, 45)'
+  const discLabelColor = dynamicTheme?.accentColor || 'rgb(216, 163, 58)'
   const themedRowStyle = shouldThemeRow
     ? {
-        '--track-row-artwork': toCssUrl(rowArtworkUrl),
-        '--track-row-artwork-opacity': isDarkMode ? 0.18 : 0.15,
-        '--track-row-artwork-hover-opacity': isDarkMode ? 0.24 : 0.26,
+        '--track-row-spine': spineColor,
+        '--track-row-spine-playing': 'rgb(226, 85, 45)',
+        '--vinyl-label': discLabelColor,
         '--track-row-bg': dynamicTheme
           ? isDarkMode
-            ? `linear-gradient(90deg, ${toRgba(dynamicTheme.cardColor, 0.74)} 0%, ${toRgba(dynamicTheme.mainColor, 0.64)} 100%)`
-            : `linear-gradient(90deg, ${toRgba(dynamicTheme.accentColor, 0.14)} 0%, ${toRgba(dynamicTheme.cardColor, 0.1)} 100%)`
+            ? `linear-gradient(90deg, ${toRgba(dynamicTheme.accentColor, 0.16)} 0%, ${toRgba(dynamicTheme.cardColor, 0.22)} 45%, rgba(0, 0, 0, 0) 100%)`
+            : `linear-gradient(90deg, ${toRgba(dynamicTheme.accentColor, 0.12)} 0%, rgba(255, 255, 255, 0) 46%)`
           : isDarkMode
-            ? 'linear-gradient(90deg, rgba(9, 9, 11, 0.76) 0%, rgba(24, 24, 27, 0.9) 100%)'
-            : 'linear-gradient(90deg, rgba(255, 255, 255, 0.78) 0%, rgba(250, 250, 250, 0.92) 100%)',
+            ? 'linear-gradient(90deg, rgba(39, 39, 42, 0.5) 0%, rgba(0, 0, 0, 0) 46%)'
+            : 'linear-gradient(90deg, rgba(226, 85, 45, 0.08) 0%, rgba(255, 255, 255, 0) 46%)',
         '--track-row-hover-bg': dynamicTheme
           ? isDarkMode
-            ? `linear-gradient(90deg, ${toRgba(dynamicTheme.accentColor, 0.64)} 0%, ${toRgba(dynamicTheme.cardColor, 0.74)} 100%)`
-            : `linear-gradient(90deg, ${toRgba(dynamicTheme.accentColor, 0.24)} 0%, ${toRgba(dynamicTheme.mainColor, 0.14)} 100%)`
+            ? `linear-gradient(90deg, ${toRgba(dynamicTheme.accentColor, 0.28)} 0%, ${toRgba(dynamicTheme.cardColor, 0.3)} 55%, rgba(0, 0, 0, 0) 100%)`
+            : `linear-gradient(90deg, ${toRgba(dynamicTheme.accentColor, 0.2)} 0%, rgba(255, 255, 255, 0) 56%)`
           : isDarkMode
-            ? 'linear-gradient(90deg, rgba(39, 39, 42, 0.84) 0%, rgba(24, 24, 27, 0.94) 100%)'
-            : 'linear-gradient(90deg, rgba(255, 255, 255, 0.68) 0%, rgba(244, 244, 245, 0.88) 100%)',
+            ? 'linear-gradient(90deg, rgba(63, 63, 70, 0.6) 0%, rgba(0, 0, 0, 0) 56%)'
+            : 'linear-gradient(90deg, rgba(226, 85, 45, 0.14) 0%, rgba(255, 255, 255, 0) 56%)',
+        '--track-row-playing-bg': isDarkMode
+          ? 'linear-gradient(90deg, rgba(226, 85, 45, 0.22) 0%, rgba(0, 0, 0, 0) 60%)'
+          : 'linear-gradient(90deg, rgba(226, 85, 45, 0.14) 0%, rgba(255, 255, 255, 0) 60%)',
         '--track-row-text': rowTextColor,
         '--track-row-muted': rowMutedColor,
         '--track-row-control-border': dynamicTheme && isDarkMode ? dynamicTheme.borderColor : dynamicTheme ? toRgba(dynamicTheme.accentColor, 0.34) : isDarkMode ? 'rgba(255, 255, 255, 0.34)' : 'rgba(212, 212, 216, 1)',
@@ -214,13 +213,16 @@ function TrackRow({
         style={themedRowStyle}
       >
         <div className="flex min-w-0 items-center gap-3">
-          <img
-            src={artworkSrc || track.artworkUrl}
-            alt={track.title}
-            className="aspect-square h-10 w-10 rounded-lg border border-zinc-200 object-cover opacity-85"
-            loading="lazy"
-            onError={handleArtworkError}
-          />
+          <span className="track-row-art-wrap block h-10 w-10 shrink-0">
+            <span className="track-row-vinyl" aria-hidden="true" />
+            <img
+              src={artworkSrc || track.artworkUrl}
+              alt={track.title}
+              className="aspect-square h-10 w-10 rounded-lg border border-zinc-200 object-cover opacity-95"
+              loading="lazy"
+              onError={handleArtworkError}
+            />
+          </span>
 
           <button
             type="button"
